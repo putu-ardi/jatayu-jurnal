@@ -61,6 +61,7 @@ function permissionRisk(key: string): RiskLevel {
   if (
     key.includes("assignments.") ||
     key.includes("fallback.") ||
+    key.includes("identities.") ||
     key.includes("sessions.") ||
     key.endsWith(".publish")
   ) {

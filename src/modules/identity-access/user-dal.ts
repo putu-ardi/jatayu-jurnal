@@ -111,7 +111,16 @@ export async function getUserAccessDetail(userId: string) {
       createdAt: true,
       updatedAt: true,
       identities: {
-        select: { provider: true, emailVerified: true, linkedAt: true, lastUsedAt: true },
+        select: {
+          id: true,
+          provider: true,
+          issuer: true,
+          subject: true,
+          emailAtLink: true,
+          emailVerified: true,
+          linkedAt: true,
+          lastUsedAt: true,
+        },
       },
       assignments: {
         orderBy: { activeFrom: "desc" },
@@ -176,6 +185,12 @@ export async function getUserAccessDetail(userId: string) {
     !isSelf && authorize(principal, capabilities.userStatusManage, schoolScope).allowed;
   const canManageFallback =
     !isSelf && authorize(principal, capabilities.fallbackManage, schoolScope).allowed;
+  const canLinkIdentities =
+    !isSelf &&
+    authorize(principal, capabilities.identityLinkManage, schoolScope).allowed;
+  const canUnlinkIdentities =
+    !isSelf &&
+    authorize(principal, capabilities.identityUnlinkManage, schoolScope).allowed;
   const canRevokeSessions = authorize(
     principal,
     capabilities.sessionsRevoke,
@@ -241,6 +256,8 @@ export async function getUserAccessDetail(userId: string) {
       hasRecentAuthentication: hasRecentAuthentication(principal, now),
       canManageStatus,
       canManageFallback,
+      canLinkIdentities,
+      canUnlinkIdentities,
       canRevokeSessions,
     },
     grantableRoles,

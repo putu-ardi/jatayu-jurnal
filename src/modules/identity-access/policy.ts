@@ -4,6 +4,8 @@ export const capabilities = {
   assignmentsGrant: "iam.assignments.grant",
   assignmentsRevoke: "iam.assignments.revoke",
   fallbackManage: "iam.fallback.manage",
+  identityLinkManage: "iam.identities.link",
+  identityUnlinkManage: "iam.identities.unlink",
   sessionsRevoke: "iam.sessions.revoke",
   auditRead: "iam.audit.read",
 } as const;

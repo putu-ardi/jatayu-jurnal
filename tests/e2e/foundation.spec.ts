@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import sharp from "sharp";
 
 const admin = {
   schoolCode: requiredEnvironment("E2E_SCHOOL_CODE"),
@@ -32,13 +33,18 @@ test("anonymous root resolves to the accessible login page", async ({ page }) =>
   const schoolCodeInput = page.getByLabel("Kode sekolah");
   const emailInput = page.getByLabel("Email");
   const passwordInput = page.getByLabel("Kata sandi");
+  const captchaInput = page.getByLabel("Hasil perhitungan");
+  const refreshCaptchaButton = page.getByRole("button", { name: "Ganti soal" });
   const submitButton = page.getByRole("button", { name: "Masuk dengan akun fallback" });
   await expect(schoolCodeInput).toBeVisible();
   await expect(emailInput).toBeVisible();
   await expect(passwordInput).toBeVisible();
+  await expect(captchaInput).toBeEnabled();
   await expectMinimumTarget(schoolCodeInput);
   await expectMinimumTarget(emailInput);
   await expectMinimumTarget(passwordInput);
+  await expectMinimumTarget(captchaInput);
+  await expectMinimumTarget(refreshCaptchaButton);
   await expectMinimumTarget(submitButton);
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),
@@ -54,6 +60,7 @@ test("anonymous root resolves to the accessible login page", async ({ page }) =>
   await schoolCodeInput.fill(admin.schoolCode);
   await emailInput.fill("absent@example.test");
   await passwordInput.fill("invalid-browser-evidence-password");
+  await fillCaptcha(page);
   await submitButton.click();
   const loginError = page.getByRole("alert", { name: "Tidak dapat masuk" });
   await expect(loginError.getByText("Email atau kata sandi tidak valid.")).toBeVisible();
@@ -150,7 +157,82 @@ async function login(
   await page.getByLabel("Kode sekolah").fill(credential.schoolCode);
   await page.getByLabel("Email").fill(credential.email);
   await page.getByLabel("Kata sandi").fill(credential.password);
+  await fillCaptcha(page);
   await page.getByRole("button", { name: "Masuk dengan akun fallback" }).click();
+}
+
+async function fillCaptcha(page: Page) {
+  const image = page.getByRole("img", {
+    name: "Soal operasi matematika dengan latar bercoret.",
+  });
+  await expect(image).toBeVisible();
+  const source = await image.getAttribute("src");
+  expect(source).toMatch(/^\/api\/auth\/captcha\/[A-Za-z0-9_-]{43}\/image$/);
+  const response = await page.request.get(source!);
+  expect(response.ok()).toBe(true);
+  expect(response.headers()["content-type"]).toBe("image/png");
+  const answer = await solveCaptchaPng(await response.body());
+  await page.getByLabel("Hasil perhitungan").fill(answer);
+}
+
+async function solveCaptchaPng(image: Buffer) {
+  const { data, info } = await sharp(image).raw().toBuffer({ resolveWithObject: true });
+  expect(info.width).toBe(240);
+  expect(info.height).toBe(88);
+  const digitValues = [48, 78, 145].map((start) =>
+    decodeSevenSegmentDigit(data, info.width, info.channels, start),
+  );
+  const operator = isDarkPixel(data, info.width, info.channels, 121, 35) ? "+" : "-";
+  const left = digitValues[0] * 10 + digitValues[1];
+  const right = digitValues[2];
+  return String(operator === "+" ? left + right : left - right);
+}
+
+function decodeSevenSegmentDigit(
+  data: Buffer,
+  width: number,
+  channels: number,
+  start: number,
+) {
+  const segmentChecks = [
+    [start + 11, 22],
+    [start + 20, 32],
+    [start + 20, 52],
+    [start + 11, 62],
+    [start + 2, 52],
+    [start + 2, 32],
+    [start + 11, 42],
+  ];
+  const active = segmentChecks.map(([x, y]) =>
+    isDarkPixel(data, width, channels, x, y),
+  );
+  const patterns = [
+    "1111110",
+    "0110000",
+    "1101101",
+    "1111001",
+    "0110011",
+    "1011011",
+    "1011111",
+    "1110000",
+    "1111111",
+    "1111011",
+  ];
+  const pattern = active.map((value) => (value ? "1" : "0")).join("");
+  const value = patterns.indexOf(pattern);
+  expect(value, `Pola digit CAPTCHA tidak dikenali: ${pattern}`).toBeGreaterThanOrEqual(0);
+  return value;
+}
+
+function isDarkPixel(
+  data: Buffer,
+  width: number,
+  channels: number,
+  x: number,
+  y: number,
+) {
+  const offset = (y * width + x) * channels;
+  return [0, 1, 2].every((channel) => (data[offset + channel] ?? 255) < 90);
 }
 
 function collectRuntimeFailures(page: Page) {

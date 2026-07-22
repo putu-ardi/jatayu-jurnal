@@ -238,8 +238,26 @@ h4 { margin-bottom: 0; font-size: 1rem; }
 .login-card-heading h2 { font-size: 1.75rem; }
 .login-icon { width: 3rem; height: 3rem; display: grid; place-items: center; color: var(--brand-primary); background: var(--brand-subtle); border: 1px solid #bfdbfe; border-radius: var(--radius-md); }
 .login-lead { margin: 1rem 0 1.5rem; color: var(--color-text-muted); }
+.google-login-section { display: grid; gap: 0.55rem; margin: 1.25rem 0 0; }
+.google-login-section .btn { width: 100%; }
+.google-login-section p { margin: 0; color: var(--color-text-muted); font-size: 0.82rem; }
+.btn-google { color: #1f2937; background: #fff; border-color: #94a3b8; box-shadow: var(--shadow-sm); }
+.btn-google:hover { color: #111827; background: #f8fafc; border-color: #64748b; }
+.btn-google:disabled { color: #64748b; background: #f1f5f9; border-color: #cbd5e1; opacity: 0.82; }
 .login-form { display: grid; gap: 1rem; }
 .login-submit { width: 100%; margin-top: 0.25rem; }
+.captcha-fieldset { min-width: 0; display: grid; gap: 0.7rem; margin: 0; padding: 0.85rem; background: #f8fafc; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+.captcha-fieldset legend { padding: 0 0.35rem; color: #1e293b; font-size: 0.9rem; font-weight: 700; }
+.captcha-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.captcha-heading > span { display: inline-flex; align-items: center; gap: 0.4rem; color: #334155; font-size: 0.82rem; font-weight: 700; }
+.captcha-heading > span svg { color: var(--brand-primary); }
+.captcha-refresh { flex: 0 0 auto; padding-inline: 0.7rem; }
+.captcha-challenge { min-height: 90px; display: grid; place-items: center; overflow: hidden; background: #e0f2fe; border: 1px solid #7dd3fc; border-radius: var(--radius-sm); }
+.captcha-image { width: min(100%, 240px); height: auto; display: block; }
+.captcha-loading { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--color-text-muted); font-size: 0.85rem; }
+.captcha-error { margin: 0; padding: 0.75rem; color: var(--color-danger); font-size: 0.84rem; text-align: center; }
+.captcha-answer { max-width: 10rem; font-variant-numeric: tabular-nums; }
+.captcha-trap { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
 .sso-notice { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--color-border-soft); }
 .sso-notice strong { display: block; color: #334155; font-size: 0.9rem; }
 .sso-notice p { margin: 0.25rem 0 0; color: var(--color-text-muted); font-size: 0.84rem; }

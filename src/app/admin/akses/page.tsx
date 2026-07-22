@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
@@ -32,6 +33,11 @@ import {
 } from "@/modules/identity-access/errors";
 import { getCurrentPrincipal } from "@/modules/identity-access/session-dal";
 import {
+  GOOGLE_LINK_CONFIRMATION_COOKIE,
+  peekGoogleLinkConfirmation,
+} from "@/modules/identity-access/google-oidc-state";
+import { isGoogleOidcEnabled } from "@/modules/identity-access/google-oidc-config";
+import {
   getUserAccessDetail,
   listUsersForAccess,
   type UserAccessListItem,
@@ -42,8 +48,11 @@ import {
   type UserPageSize,
 } from "@/modules/identity-access/user-list-query";
 import {
+  ConfirmGoogleIdentityLinkForm,
   DisableFallbackForm,
   EnableFallbackForm,
+  LinkGoogleIdentityForm,
+  UnlinkGoogleIdentityForm,
   GrantAssignmentForm,
   RevokeAssignmentForm,
   RevokeSessionForm,
@@ -61,6 +70,7 @@ export default async function UserAccessPage({ searchParams }: { searchParams: P
   const rawParams = await searchParams;
   const query = parseUserListQuery(rawParams);
   const requestedUserId = singleValue(rawParams.user);
+  const googleLinkStatus = singleValue(rawParams.googleLink);
 
   const result = await loadUserAccessPageData(query, requestedUserId);
   if (result.kind === "denied") return <AccessDenied />;
@@ -175,7 +185,13 @@ export default async function UserAccessPage({ searchParams }: { searchParams: P
 
             <section className="access-detail" aria-label="Detail akses pengguna terpilih">
               {detail ? (
-                <UserDetail detail={detail} currentSessionId={principal.sessionId} />
+                <UserDetail
+                  detail={detail}
+                  currentSessionId={principal.sessionId}
+                  actorUserId={principal.userId}
+                  schoolId={principal.schoolId}
+                  googleLinkStatus={googleLinkStatus}
+                />
               ) : (
                 <div className="empty-state card">
                   <CircleOff aria-hidden="true" size={30} />
@@ -234,12 +250,42 @@ function UserListCard({ user, selected, href }: { user: UserAccessListItem; sele
   );
 }
 
-async function UserDetail({ detail, currentSessionId }: { detail: NonNullable<Awaited<ReturnType<typeof getUserAccessDetail>>>; currentSessionId: string }) {
+async function UserDetail({
+  detail,
+  currentSessionId,
+  actorUserId,
+  schoolId,
+  googleLinkStatus,
+}: {
+  detail: NonNullable<Awaited<ReturnType<typeof getUserAccessDetail>>>;
+  currentSessionId: string;
+  actorUserId: string;
+  schoolId: string;
+  googleLinkStatus: string | undefined;
+}) {
   const activeAssignments = detail.assignments.filter((assignment) => assignment.isActive);
   const assignmentHistory = detail.assignments.filter((assignment) => !assignment.isActive);
   const activeSessions = detail.sessions.filter((session) => session.isActive);
   const fallbackEnabled = Boolean(detail.fallbackCredential && !detail.fallbackCredential.disabledAt);
-  const hasAnyRiskyPermission = detail.actions.canManageStatus || detail.actions.canManageFallback || detail.actions.canRevokeSessions || detail.grantableRoles.length > 0 || detail.assignments.some((assignment) => assignment.canRevoke);
+  const googleEnabled = isGoogleOidcEnabled();
+  const confirmationToken = (await cookies()).get(GOOGLE_LINK_CONFIRMATION_COOKIE)?.value;
+  const pendingGoogleLink = confirmationToken
+    ? await peekGoogleLinkConfirmation(confirmationToken)
+    : null;
+  const confirmedGoogleLink =
+    pendingGoogleLink &&
+    pendingGoogleLink.actorSessionId === currentSessionId &&
+    pendingGoogleLink.actorUserId === actorUserId &&
+    pendingGoogleLink.schoolId === schoolId &&
+    pendingGoogleLink.targetUserId === detail.id &&
+    pendingGoogleLink.targetVersion === detail.version &&
+    detail.status === "ACTIVE"
+      ? pendingGoogleLink
+      : null;
+  const hasGoogleIdentity = detail.identities.some(
+    (identity) => identity.provider === "GOOGLE_WORKSPACE",
+  );
+  const hasAnyRiskyPermission = detail.actions.canManageStatus || detail.actions.canManageFallback || detail.actions.canLinkIdentities || detail.actions.canUnlinkIdentities || detail.actions.canRevokeSessions || detail.grantableRoles.length > 0 || detail.assignments.some((assignment) => assignment.canRevoke);
 
   return (
     <div className="detail-stack">
@@ -289,17 +335,64 @@ async function UserDetail({ detail, currentSessionId }: { detail: NonNullable<Aw
           <div className="subsection">
             <h4>Identitas eksternal tertaut</h4>
             {detail.identities.map((identity) => (
-              <div className="record-row" key={`${identity.provider}-${identity.linkedAt.toISOString()}`}>
-                <div><strong>{identityProviderLabel(identity.provider)}</strong><span>Ditautkan {formatDateTime(identity.linkedAt)}</span></div>
-                <StatusPill tone={identity.emailVerified ? "success" : "warning"} icon={identity.emailVerified ? <BadgeCheck size={15} /> : <AlertTriangle size={15} />}>
-                  {identity.emailVerified ? "Email terverifikasi" : "Verifikasi belum tercatat"}
-                </StatusPill>
+              <div className="record-row record-row-action" key={identity.id}>
+                <div className="record-copy"><strong>{identityProviderLabel(identity.provider)}</strong><span>Ditautkan {formatDateTime(identity.linkedAt)}</span></div>
+                <div className="record-actions">
+                  <StatusPill tone={identity.emailVerified ? "success" : "warning"} icon={identity.emailVerified ? <BadgeCheck size={15} /> : <AlertTriangle size={15} />}>
+                    {identity.emailVerified ? "Email terverifikasi" : "Verifikasi belum tercatat"}
+                  </StatusPill>
+                  {identity.provider === "GOOGLE_WORKSPACE" && detail.actions.canUnlinkIdentities ? (
+                    detail.actions.hasRecentAuthentication ? (
+                      <UnlinkGoogleIdentityForm identityId={identity.id} targetUserId={detail.id} expectedVersion={detail.version} />
+                    ) : <span className="muted-note">Perlu autentikasi terbaru</span>
+                  ) : null}
+                </div>
               </div>
             ))}
           </div>
         ) : (
-          <EmptyInline icon={<Fingerprint size={20} />} title="Belum ada identitas Google tertaut" copy="Akun ini menggunakan provisioning lokal atau impor. Integrasi Google Workspace belum dikonfigurasi." />
+          <EmptyInline
+            icon={<Fingerprint size={20} />}
+            title="Belum ada identitas Google tertaut"
+            copy={googleEnabled
+              ? "Verifikasi eksplisit oleh Admin Akses diperlukan sebelum login Google dapat digunakan."
+              : "Google Workspace belum diaktifkan; login fallback tetap tersedia."}
+          />
         )}
+
+        {googleLinkStatus === "error" ? (
+          <div className="alert alert-warning" role="status">
+            <AlertTriangle aria-hidden="true" size={20} />
+            <div><strong>Verifikasi Google tidak selesai</strong><p>Coba kembali tanpa mengubah identitas pengguna.</p></div>
+          </div>
+        ) : null}
+
+        {googleLinkStatus === "confirm" && confirmedGoogleLink ? (
+          <div className="subsection action-subsection">
+            <div className="subsection-heading">
+              <div><h4>Konfirmasi identitas Google</h4><p>Verifikasi berlaku satu kali dan kedaluwarsa dalam sepuluh menit.</p></div>
+              <StatusPill tone="success" icon={<BadgeCheck size={15} />}>Google terverifikasi</StatusPill>
+            </div>
+            <ConfirmGoogleIdentityLinkForm email={confirmedGoogleLink.email} />
+          </div>
+        ) : googleLinkStatus === "confirm" ? (
+          <div className="alert alert-warning" role="status">
+            <AlertTriangle aria-hidden="true" size={20} />
+            <div><strong>Konfirmasi tidak tersedia</strong><p>Verifikasi mungkin kedaluwarsa atau bukan milik sesi dan target ini.</p></div>
+          </div>
+        ) : null}
+
+        {googleEnabled && detail.actions.canLinkIdentities && !hasGoogleIdentity && detail.status === "ACTIVE" && !confirmedGoogleLink ? (
+          detail.actions.hasRecentAuthentication ? (
+            <div className="subsection action-subsection">
+              <div className="subsection-heading">
+                <div><h4>Tautkan Google Workspace</h4><p>Masuk ke akun Google milik pengguna target, lalu konfirmasi hasilnya di halaman ini.</p></div>
+                <StatusPill tone="info" icon={<ShieldCheck size={15} />}>Tanpa auto-link email</StatusPill>
+              </div>
+              <LinkGoogleIdentityForm targetUserId={detail.id} expectedVersion={detail.version} />
+            </div>
+          ) : <RecentAuthInline />
+        ) : null}
       </DetailSection>
 
       <DetailSection icon={<ShieldCheck size={20} />} eyebrow="Authorization" title="Role & scope aktif" count={activeAssignments.length}>
@@ -552,6 +645,8 @@ function auditEventLabel(value: string) {
     "iam.session.revoked": "Sesi dicabut",
     "iam.fallback.enabled": "Fallback diaktifkan",
     "iam.fallback.disabled": "Fallback dinonaktifkan",
+    "iam.identity.google.linked": "Identitas Google ditautkan",
+    "iam.identity.google.unlinked": "Identitas Google dilepas",
     "iam.user.status.changed": "Status pengguna diubah",
     "auth.fallback.succeeded": "Login fallback berhasil",
     "auth.fallback.denied": "Login fallback ditolak",

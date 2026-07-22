@@ -10,6 +10,11 @@ const mocks = vi.hoisted(() => {
       findFirst: vi.fn(),
       updateMany: vi.fn(),
     },
+    userIdentity: {
+      create: vi.fn(),
+      findFirst: vi.fn(),
+      deleteMany: vi.fn(),
+    },
     role: {
       findUnique: vi.fn(),
     },
@@ -70,9 +75,11 @@ vi.mock("./session-dal", () => ({
 import { ConflictError, AuthorizationDeniedError } from "./errors";
 import {
   grantRoleAssignment,
+  linkGoogleIdentity,
   revokeRoleAssignment,
   revokeUserSession,
   setFallbackCredential,
+  unlinkGoogleIdentity,
   updateUserStatus,
 } from "./mutations";
 
@@ -94,6 +101,8 @@ const actorPrincipal: Principal = {
         "iam.assignments.grant",
         "iam.assignments.revoke",
         "iam.fallback.manage",
+        "iam.identities.link",
+        "iam.identities.unlink",
         "iam.sessions.revoke",
       ],
       scope: { schoolId: "school-a", type: "SCHOOL", reference: null },
@@ -296,6 +305,322 @@ describe("assignment mutations", () => {
       { isolationLevel: "Serializable" },
     );
   });
+});
+
+describe("linkGoogleIdentity", () => {
+  const input = {
+    requestPrincipal: actorPrincipal,
+    actorSessionId: actorPrincipal.sessionId,
+    actorUserId: actorPrincipal.userId,
+    schoolId: actorPrincipal.schoolId,
+    targetUserId: "target-user",
+    expectedVersion: 7,
+    issuer: "https://accounts.google.com",
+    subject: "google-subject-123",
+    emailAtLink: "student@school.example",
+    reason: "Penautan identitas disetujui Admin Akses.",
+  };
+
+  it.each([
+    ["session actor berbeda", { actorSessionId: "session-other" }],
+    ["user actor berbeda", { actorUserId: "actor-other" }],
+    ["sekolah actor berbeda", { schoolId: "school-other" }],
+  ])("denies %s before opening a transaction", async (_label, override) => {
+    await expect(linkGoogleIdentity({ ...input, ...override })).rejects.toBeInstanceOf(
+      AuthorizationDeniedError,
+    );
+
+    expect(mocks.database.$transaction).not.toHaveBeenCalled();
+    expect(mocks.transaction.userIdentity.create).not.toHaveBeenCalled();
+  });
+
+  it("denies linking the actor's own Google identity", async () => {
+    await expect(
+      linkGoogleIdentity({ ...input, targetUserId: actorPrincipal.userId }),
+    ).rejects.toBeInstanceOf(AuthorizationDeniedError);
+
+    expect(mocks.database.$transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["invited", { id: input.targetUserId, version: 7, status: "INVITED" }],
+    ["suspended", { id: input.targetUserId, version: 7, status: "SUSPENDED" }],
+    ["foreign or unknown", null],
+    ["deactivated", { id: input.targetUserId, version: 7, status: "DEACTIVATED" }],
+  ])("denies a %s target", async (_label, target) => {
+    mocks.transaction.user.findFirst.mockResolvedValue(target);
+
+    await expect(linkGoogleIdentity(input)).rejects.toBeInstanceOf(
+      AuthorizationDeniedError,
+    );
+
+    expect(mocks.transaction.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: input.targetUserId, schoolId: actorPrincipal.schoolId },
+      }),
+    );
+    expect(mocks.transaction.userIdentity.create).not.toHaveBeenCalled();
+    expect(mocks.appendAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale target version before writing", async () => {
+    mocks.transaction.user.findFirst.mockResolvedValue({
+      id: input.targetUserId,
+      version: input.expectedVersion + 1,
+      status: "ACTIVE",
+    });
+
+    await expect(linkGoogleIdentity(input)).rejects.toBeInstanceOf(ConflictError);
+
+    expect(mocks.transaction.user.updateMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.userIdentity.create).not.toHaveBeenCalled();
+  });
+
+  it("maps a duplicate Google identity to a safe conflict and rolls back audit", async () => {
+    mocks.transaction.user.findFirst.mockResolvedValue({
+      id: input.targetUserId,
+      version: input.expectedVersion,
+      status: "ACTIVE",
+    });
+    mocks.transaction.user.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.userIdentity.create.mockRejectedValue({ code: "P2002" });
+
+    await expect(linkGoogleIdentity(input)).rejects.toBeInstanceOf(ConflictError);
+
+    expect(mocks.appendAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("atomically creates the identity and writes a minimized audit record", async () => {
+    mocks.transaction.user.findFirst.mockResolvedValue({
+      id: input.targetUserId,
+      version: input.expectedVersion,
+      status: "ACTIVE",
+    });
+    mocks.transaction.user.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.userIdentity.create.mockResolvedValue({ id: "identity-google" });
+
+    await expect(linkGoogleIdentity(input)).resolves.toEqual({ id: "identity-google" });
+
+    expect(mocks.database.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { isolationLevel: "Serializable" },
+    );
+    expect(mocks.transaction.user.updateMany).toHaveBeenCalledWith({
+      where: {
+        status: "ACTIVE",
+        id: input.targetUserId,
+        schoolId: actorPrincipal.schoolId,
+        version: input.expectedVersion,
+      },
+      data: { version: { increment: 1 } },
+    });
+    expect(mocks.transaction.userIdentity.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: input.targetUserId,
+          provider: "GOOGLE_WORKSPACE",
+          issuer: input.issuer,
+          subject: input.subject,
+          emailAtLink: input.emailAtLink,
+          emailVerified: true,
+        }),
+      }),
+    );
+    expect(mocks.appendAuditLog).toHaveBeenCalledWith(
+      mocks.transaction,
+      expect.objectContaining({
+        eventType: "iam.identity.google.linked",
+        entityId: "identity-google",
+        subjectUserId: input.targetUserId,
+        after: {
+          provider: "GOOGLE_WORKSPACE",
+          issuer: input.issuer,
+          emailVerified: true,
+          userVersion: input.expectedVersion + 1,
+        },
+      }),
+    );
+    const auditInput = mocks.appendAuditLog.mock.calls[0]?.[1];
+    expect(auditInput.after).not.toHaveProperty("subject");
+    expect(auditInput.after).not.toHaveProperty("emailAtLink");
+  });
+});
+
+describe("unlinkGoogleIdentity", () => {
+  const input = {
+    identityId: "identity-google",
+    targetUserId: "target-user",
+    expectedVersion: 7,
+    reason: "Pelepasan identitas untuk pemulihan akses.",
+  };
+
+  it("uses the separate unlink capability and denies self-targeting before a transaction", async () => {
+    await expect(
+      unlinkGoogleIdentity({ ...input, targetUserId: actorPrincipal.userId }),
+    ).rejects.toBeInstanceOf(AuthorizationDeniedError);
+
+    expect(mocks.requireCapability).toHaveBeenCalledWith("iam.identities.unlink");
+    expect(mocks.database.$transaction).not.toHaveBeenCalled();
+    expect(mocks.transaction.userIdentity.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("denies a foreign or missing target without reading the identity", async () => {
+    mocks.transaction.user.findFirst.mockResolvedValue(null);
+
+    await expect(unlinkGoogleIdentity(input)).rejects.toBeInstanceOf(
+      AuthorizationDeniedError,
+    );
+
+    expect(mocks.transaction.user.findFirst).toHaveBeenCalledWith({
+      where: { id: input.targetUserId, schoolId: actorPrincipal.schoolId },
+      select: { id: true, version: true },
+    });
+    expect(mocks.transaction.userIdentity.findFirst).not.toHaveBeenCalled();
+    expect(mocks.transaction.userIdentity.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale target version before reading or deleting the identity", async () => {
+    mocks.transaction.user.findFirst.mockResolvedValue({
+      id: input.targetUserId,
+      version: input.expectedVersion + 1,
+      status: "SUSPENDED",
+    });
+
+    await expect(unlinkGoogleIdentity(input)).rejects.toBeInstanceOf(ConflictError);
+
+    expect(mocks.transaction.userIdentity.findFirst).not.toHaveBeenCalled();
+    expect(mocks.transaction.user.updateMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.session.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("denies an identity that is not Google-linked to the selected target", async () => {
+    mocks.transaction.user.findFirst.mockResolvedValue({
+      id: input.targetUserId,
+      version: input.expectedVersion,
+      status: "DEACTIVATED",
+    });
+    mocks.transaction.userIdentity.findFirst.mockResolvedValue(null);
+
+    await expect(unlinkGoogleIdentity(input)).rejects.toBeInstanceOf(
+      AuthorizationDeniedError,
+    );
+
+    expect(mocks.transaction.userIdentity.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: input.identityId,
+        userId: input.targetUserId,
+        provider: "GOOGLE_WORKSPACE",
+      },
+      select: { id: true, issuer: true, emailVerified: true },
+    });
+    expect(mocks.transaction.userIdentity.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.appendAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("maps a concurrent identity deletion to a conflict without audit", async () => {
+    mocks.transaction.user.findFirst.mockResolvedValue({
+      id: input.targetUserId,
+      version: input.expectedVersion,
+      status: "INVITED",
+    });
+    mocks.transaction.userIdentity.findFirst.mockResolvedValue({
+      id: input.identityId,
+      issuer: "https://accounts.google.com",
+      emailVerified: true,
+    });
+    mocks.transaction.user.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.userIdentity.deleteMany.mockResolvedValue({ count: 0 });
+
+    await expect(unlinkGoogleIdentity(input)).rejects.toBeInstanceOf(ConflictError);
+
+    expect(mocks.transaction.session.updateMany).not.toHaveBeenCalled();
+    expect(mocks.appendAuditLog).not.toHaveBeenCalled();
+  });
+
+  it.each(["INVITED", "SUSPENDED", "DEACTIVATED"])(
+    "unlinks an identity from a %s target and revokes only active Google sessions",
+    async (status) => {
+      mocks.transaction.user.findFirst.mockResolvedValue({
+        id: input.targetUserId,
+        version: input.expectedVersion,
+        status,
+      });
+      mocks.transaction.userIdentity.findFirst.mockResolvedValue({
+        id: input.identityId,
+        issuer: "https://accounts.google.com",
+        emailVerified: true,
+      });
+      mocks.transaction.user.updateMany.mockResolvedValue({ count: 1 });
+      mocks.transaction.userIdentity.deleteMany.mockResolvedValue({ count: 1 });
+      mocks.transaction.session.updateMany.mockResolvedValue({ count: 2 });
+
+      await expect(unlinkGoogleIdentity(input)).resolves.toEqual({
+        id: input.identityId,
+        revokedSessionCount: 2,
+      });
+
+      expect(mocks.database.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        { isolationLevel: "Serializable" },
+      );
+      expect(mocks.transaction.user.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: input.targetUserId,
+          schoolId: actorPrincipal.schoolId,
+          version: input.expectedVersion,
+        },
+        data: { version: { increment: 1 } },
+      });
+      expect(mocks.transaction.userIdentity.deleteMany).toHaveBeenCalledWith({
+        where: {
+          id: input.identityId,
+          userId: input.targetUserId,
+          provider: "GOOGLE_WORKSPACE",
+        },
+      });
+      expect(mocks.transaction.session.updateMany).toHaveBeenCalledWith({
+        where: {
+          userId: input.targetUserId,
+          authMethod: "GOOGLE_WORKSPACE",
+          revokedAt: null,
+          expiresAt: { gt: expect.any(Date) },
+        },
+        data: {
+          revokedAt: expect.any(Date),
+          revokedByUserId: actorPrincipal.userId,
+          revokeReason: input.reason,
+          version: { increment: 1 },
+        },
+      });
+      expect(mocks.appendAuditLog).toHaveBeenCalledWith(
+        mocks.transaction,
+        expect.objectContaining({
+          eventType: "iam.identity.google.unlinked",
+          entityId: input.identityId,
+          subjectUserId: input.targetUserId,
+          before: {
+            provider: "GOOGLE_WORKSPACE",
+            issuer: "https://accounts.google.com",
+            emailVerified: true,
+            userVersion: input.expectedVersion,
+          },
+          after: { linked: false, userVersion: input.expectedVersion + 1 },
+          metadata: {
+            authMethod: "GOOGLE_WORKSPACE",
+            revokedGoogleSessionCount: 2,
+          },
+        }),
+      );
+      const auditInput = mocks.appendAuditLog.mock.calls[0]?.[1];
+      expect(auditInput.before).not.toHaveProperty("subject");
+      expect(auditInput.before).not.toHaveProperty("emailAtLink");
+      expect(auditInput.after).not.toHaveProperty("subject");
+      expect(auditInput.after).not.toHaveProperty("emailAtLink");
+      expect(auditInput.metadata).not.toHaveProperty("subject");
+      expect(auditInput.metadata).not.toHaveProperty("emailAtLink");
+      expect(mocks.transaction.fallbackCredential.updateMany).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("revokeUserSession", () => {

@@ -26,6 +26,7 @@ ENV NODE_ENV=production \
 RUN groupadd --system --gid 1001 nodejs \
     && useradd --system --uid 1001 --gid nodejs --home-dir /nonexistent --shell /usr/sbin/nologin nextjs
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@img/sharp-libvips-linux-x64/lib ./node_modules/@img/sharp-libvips-linux-x64/lib
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 USER 1001:1001

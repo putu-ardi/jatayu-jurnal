@@ -44,6 +44,8 @@ export const PERMISSION_DESCRIPTIONS: Record<string, string> = {
   [capabilities.assignmentsGrant]: "Memberi penugasan sesuai grant boundary.",
   [capabilities.assignmentsRevoke]: "Mencabut penugasan sesuai grant boundary.",
   [capabilities.fallbackManage]: "Mengaktifkan atau menonaktifkan fallback per akun.",
+  [capabilities.identityLinkManage]: "Menautkan identitas Google Workspace secara eksplisit.",
+  [capabilities.identityUnlinkManage]: "Melepas identitas Google Workspace secara eksplisit.",
   [capabilities.sessionsRevoke]: "Mencabut sesi pengguna dalam scope.",
   [capabilities.auditRead]: "Membaca audit akses yang sudah diredaksi.",
   "academic.periods.read": "Membaca periode akademik.",

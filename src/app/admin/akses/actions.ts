@@ -1,15 +1,33 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { z } from "zod";
+import { shouldUseSecureCookies } from "@/lib/request-security";
+import {
+  createGoogleIdentityLinkAuthorizationRequest,
+} from "@/modules/identity-access/google-authentication";
+import {
+  isGoogleOidcEnabled,
+  requireGoogleOidcSettings,
+} from "@/modules/identity-access/google-oidc-config";
+import {
+  consumeGoogleLinkConfirmation,
+  GOOGLE_LINK_CONFIRMATION_COOKIE,
+  GOOGLE_LINK_STATE_COOKIE,
+} from "@/modules/identity-access/google-oidc-state";
 import {
   disableFallbackCredential,
   grantRoleAssignment,
+  linkGoogleIdentity,
   revokeRoleAssignment,
   revokeUserSession,
   setFallbackCredential,
+  unlinkGoogleIdentity,
   updateUserStatus,
 } from "@/modules/identity-access/mutations";
+import { getCurrentPrincipal } from "@/modules/identity-access/session-dal";
 
 export type ActionState =
   | { ok: true; message: string }
@@ -26,6 +44,109 @@ function resultMessage(error: unknown) {
   return error instanceof Error && error.name === "ConflictError"
     ? "Data telah berubah. Muat ulang lalu tinjau kembali."
     : "Aksi tidak dapat diproses. Periksa hak akses dan autentikasi terbaru.";
+}
+
+export async function startGoogleIdentityLink(formData: FormData): Promise<never> {
+  const parsed = commonSchema.extend({
+    expectedVersion: z.coerce.number().int().positive(),
+  }).safeParse(Object.fromEntries(formData));
+  if (!parsed.success || !isGoogleOidcEnabled()) {
+    redirect("/admin/akses?googleLink=error");
+  }
+
+  let authorization: Awaited<ReturnType<typeof createGoogleIdentityLinkAuthorizationRequest>>;
+  try {
+    authorization = await createGoogleIdentityLinkAuthorizationRequest(parsed.data);
+  } catch {
+    redirect(`/admin/akses?user=${parsed.data.targetUserId}&googleLink=error`);
+  }
+
+  const cookieStore = await cookies();
+  cookieStore.set(GOOGLE_LINK_STATE_COOKIE, authorization.state, {
+    httpOnly: true,
+    secure: await shouldUseSecureCookies(),
+    sameSite: "lax",
+    path: "/api/auth/google/link",
+    maxAge: 10 * 60,
+    priority: "high",
+  });
+  redirect(authorization.url.toString());
+}
+
+export async function confirmGoogleIdentityLink(
+  previousState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  void previousState;
+  void formData;
+  const cookieStore = await cookies();
+  const confirmationToken = cookieStore.get(GOOGLE_LINK_CONFIRMATION_COOKIE)?.value;
+  cookieStore.set(GOOGLE_LINK_CONFIRMATION_COOKIE, "", {
+    httpOnly: true,
+    secure: await shouldUseSecureCookies(),
+    sameSite: "lax",
+    path: "/admin/akses",
+    maxAge: 0,
+  });
+  if (!confirmationToken || !isGoogleOidcEnabled()) {
+    return { ok: false, message: "Konfirmasi Google tidak tersedia atau sudah kedaluwarsa." };
+  }
+
+  const confirmation = await consumeGoogleLinkConfirmation(confirmationToken);
+  if (!confirmation) {
+    return { ok: false, message: "Konfirmasi Google tidak tersedia atau sudah digunakan." };
+  }
+
+  try {
+    const [principal, settings] = await Promise.all([
+      getCurrentPrincipal(),
+      Promise.resolve(requireGoogleOidcSettings()),
+    ]);
+    if (
+      !principal ||
+      confirmation.issuer !== settings.issuer ||
+      confirmation.hostedDomain !== settings.hostedDomain
+    ) {
+      return { ok: false, message: "Konfirmasi Google tidak lagi memenuhi kebijakan sekolah." };
+    }
+    await linkGoogleIdentity({
+      requestPrincipal: principal,
+      actorSessionId: confirmation.actorSessionId,
+      actorUserId: confirmation.actorUserId,
+      schoolId: confirmation.schoolId,
+      targetUserId: confirmation.targetUserId,
+      expectedVersion: confirmation.targetVersion,
+      issuer: confirmation.issuer,
+      subject: confirmation.subject,
+      emailAtLink: confirmation.email,
+      reason: confirmation.reason,
+    });
+    revalidatePath("/admin/akses");
+    return { ok: true, message: "Identitas Google Workspace ditautkan dan dicatat di audit." };
+  } catch (error) {
+    return { ok: false, message: resultMessage(error) };
+  }
+}
+
+export async function unlinkGoogleIdentityAction(
+  _state: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = z.object({
+    identityId: z.uuid(),
+    targetUserId: z.uuid(),
+    expectedVersion: z.coerce.number().int().positive(),
+    reason: reasonSchema,
+  }).safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok: false, message: "Input pelepasan identitas tidak valid." };
+
+  try {
+    await unlinkGoogleIdentity(parsed.data);
+    revalidatePath("/admin/akses");
+    return { ok: true, message: "Identitas Google dilepas, sesi Google dicabut, dan perubahan diaudit." };
+  } catch (error) {
+    return { ok: false, message: resultMessage(error) };
+  }
 }
 
 export async function changeUserStatus(

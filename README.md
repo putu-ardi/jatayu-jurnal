@@ -1,6 +1,6 @@
 # E-JLS — Fondasi Produksi dan Identity & Access
 
-Workspace produksi untuk Elektronik Jurnal dan Laboratorium Sekolah (E-JLS) SMK Jatayu. Fondasi Docker dan modul P-10 Identity & Access telah tersedia: login fallback tenant-qualified, sesi yang dapat dicabut, policy capability/scope/grant-boundary, manajemen pengguna, dan audit privilege. Login Google Workspace belum dikonfigurasi dan tidak ditampilkan sebagai opsi aktif.
+Workspace produksi untuk Elektronik Jurnal dan Laboratorium Sekolah (E-JLS) SMK Jatayu. Fondasi Docker dan modul P-10 Identity & Access telah tersedia: login fallback tenant-qualified dengan CAPTCHA matematika lokal, sesi yang dapat dicabut, policy capability/scope/grant-boundary, manajemen pengguna, dan audit privilege. Login Google Workspace belum dikonfigurasi dan tidak ditampilkan sebagai opsi aktif.
 
 Jurnal, absensi, statistik, dan workflow bisnis lain belum diimplementasikan. Dokumen PRD, perancangan, discovery, backlog, design system, dan prototipe Fase 0 tetap berada di folder induk dan tidak boleh diubah dari workspace produksi ini. Status implementasi ini tidak menyatakan persetujuan stakeholder atas keputusan produk yang masih terbuka. Lihat `docs/foundation-gate-ledger.md` untuk bukti, blocker, otoritas penutup, dan status Foundation **Belum diterima**.
 
@@ -14,7 +14,7 @@ Jurnal, absensi, statistik, dan workflow bisnis lain belum diimplementasikan. Do
 - Docker Compose sebagai jalur runtime produksi-lokal yang utama.
 - GitHub Actions untuk quality gate serta evidence Docker/database/browser/accessibility yang terisolasi.
 
-Keputusan arsitektur dicatat di `docs/adr/0001-foundation-stack.md`. Rehearsal deployment target mengikuti `docs/runbooks/staging-foundation.md`; runbook tersedia, tetapi belum membuktikan bahwa staging telah dijalankan.
+Keputusan arsitektur dicatat di `docs/adr/0001-foundation-stack.md`. Rehearsal deployment target mengikuti `docs/runbooks/staging-foundation.md`; runbook tersedia, tetapi belum membuktikan bahwa staging telah dijalankan. Prosedur persiapan SSO Google Workspace Education ada di `docs/runbooks/google-workspace-sso.md`; SSO tetap nonaktif sampai metadata, approval, dan acceptance checklist lengkap.
 
 ## Topologi runtime
 
@@ -125,7 +125,9 @@ Readiness hanya mengembalikan status `up`/`down` dan tidak mengekspos exception,
 
 ## Identity, access, dan sesi
 
-- Login fallback selalu membutuhkan kode sekolah dan email; pesan gagal sama untuk school/user/password/status/lock mismatch.
+- Login fallback selalu membutuhkan kode sekolah, email, dan CAPTCHA matematika lokal; pesan gagal credential sama untuk school/user/password/status/lock mismatch.
+- CAPTCHA dirasterisasi sebagai PNG bercoret, disimpan di Redis selama lima menit sebagai salt+hash jawaban, dan dikonsumsi atomik satu kali sebelum autentikasi credential. Endpoint memakai `no-store`, honeypot tersembunyi, fail-closed saat Redis gagal, serta limiter Nginx gabungan untuk issuance dan rendering image sebesar 30 request/menit per IP dengan burst 9.
+- CAPTCHA hanya memberi friksi bot ringan dan masih memerlukan review aksesibilitas manual; jangan menganggapnya pengganti rate limit, lockout, MFA, atau proteksi abuse berlapis.
 - Landing setelah login mengikuti capability yang sudah diimplementasikan: principal P-10 diarahkan ke `/admin/akses`, sedangkan principal valid tanpa P-10 tetap pada workspace netral dan tidak diberi tautan Admin palsu.
 - Direktori pengguna P-10 menyediakan page size allowlist 10/25/50/100 (default 25); filter, halaman, page size, dan detail terpilih dipertahankan secara aman pada navigasi yang relevan.
 - Password fallback di-hash bcrypt cost 12, maksimal 72 byte, minimal 12 karakter, dan wajib memuat huruf kecil, huruf besar, angka, serta simbol.
@@ -135,7 +137,8 @@ Readiness hanya mengembalikan status `up`/`down` dan tidak mengekspos exception,
 - Sesi berlaku tetap 8 jam. Mutasi berisiko memerlukan autentikasi dalam 15 menit terakhir.
 - Policy deny-by-default memerlukan assignment aktif, capability, tenant/scope containment, dan grant boundary. Scope selain `SCHOOL` hanya mengandung target dengan tipe+reference yang sama; belum ada pewarisan `PROGRAM` ke `CLASS`.
 - Setiap mutasi privilege mengunci lalu memuat ulang session, status user, assignment, capability, dan grant boundary actor di dalam transaction `Serializable`; authorization dari awal request hanya dipakai sebagai fail-fast. Revoke atau perubahan policy konkuren harus selesai lebih dulu atau menghasilkan conflict aman.
-- Self-elevation, perubahan lifecycle sendiri, dan perubahan fallback sendiri ditolak. Mencabut sesi sendiri tetap diperbolehkan bila actor memiliki capability.
+- Self-elevation, perubahan lifecycle sendiri, perubahan fallback sendiri, serta link/unlink identitas sendiri ditolak. Mencabut sesi sendiri tetap diperbolehkan bila actor memiliki capability.
+- Linking Google hanya menerima target `ACTIVE`. Unlink memakai capability `iam.identities.unlink` terpisah, tersedia untuk remediation pada status target apa pun, mencabut hanya sesi Google aktif, mempertahankan fallback, dan mencatat audit tanpa federated subject/email.
 - Suspend/deactivate mencabut seluruh sesi aktif. Mutasi berversi menggunakan optimistic concurrency; serialization, deadlock, unique, dan exclusion conflict dipetakan menjadi konflik aman yang meminta operator memuat ulang.
 - PostgreSQL menolak active role assignment dengan tenant/user/role/scope dan rentang efektif yang overlap, termasuk pada grant konkuren. Kode sekolah dan email tenant juga unik secara case-insensitive.
 - Audit actor dan subject dipisahkan, metadata diredaksi, dan tabel audit append-only di database.

@@ -522,6 +522,99 @@ export async function setFallbackCredential(input: {
   });
 }
 
+export async function linkGoogleIdentity(input: {
+  requestPrincipal: Principal;
+  actorSessionId: string;
+  actorUserId: string;
+  schoolId: string;
+  targetUserId: string;
+  expectedVersion: number;
+  issuer: string;
+  subject: string;
+  emailAtLink: string;
+  reason: string;
+}) {
+  if (
+    input.requestPrincipal.sessionId !== input.actorSessionId ||
+    input.requestPrincipal.userId !== input.actorUserId ||
+    input.requestPrincipal.schoolId !== input.schoolId ||
+    input.requestPrincipal.userId === input.targetUserId
+  ) {
+    throw new AuthorizationDeniedError();
+  }
+  requireRecentAuthentication(input.requestPrincipal.authenticatedAt);
+
+  return runSerializableMutation(async (transaction) => {
+    const { principal, actorAssignmentId } = await refreshPrincipalWithCapability(
+      input.requestPrincipal,
+      capabilities.identityLinkManage,
+      transaction,
+    );
+    if (
+      principal.sessionId !== input.actorSessionId ||
+      principal.userId !== input.actorUserId ||
+      principal.schoolId !== input.schoolId ||
+      principal.userId === input.targetUserId
+    ) {
+      throw new AuthorizationDeniedError();
+    }
+
+    const target = await transaction.user.findFirst({
+      where: { id: input.targetUserId, schoolId: principal.schoolId },
+      select: { id: true, version: true, status: true },
+    });
+    if (!target || target.status !== "ACTIVE") {
+      throw new AuthorizationDeniedError();
+    }
+    if (target.version !== input.expectedVersion) throw new ConflictError();
+
+    const versionUpdate = await transaction.user.updateMany({
+      where: {
+        id: target.id,
+        schoolId: principal.schoolId,
+        status: "ACTIVE",
+        version: input.expectedVersion,
+      },
+      data: { version: { increment: 1 } },
+    });
+    if (versionUpdate.count !== 1) throw new ConflictError();
+
+    const identity = await transaction.userIdentity.create({
+      data: {
+        userId: target.id,
+        provider: "GOOGLE_WORKSPACE",
+        issuer: input.issuer,
+        subject: input.subject,
+        emailAtLink: input.emailAtLink,
+        emailVerified: true,
+      },
+      select: { id: true },
+    });
+
+    await appendAuditLog(transaction, {
+      schoolId: principal.schoolId,
+      principal,
+      subjectUserId: target.id,
+      actorAssignmentId,
+      eventType: "iam.identity.google.linked",
+      entityType: "UserIdentity",
+      entityId: identity.id,
+      action: "link",
+      outcome: "SUCCEEDED",
+      reason: input.reason,
+      after: {
+        provider: "GOOGLE_WORKSPACE",
+        issuer: input.issuer,
+        emailVerified: true,
+        userVersion: target.version + 1,
+      },
+      correlationId: randomUUID(),
+    });
+
+    return identity;
+  });
+}
+
 export async function disableFallbackCredential(input: {
   targetUserId: string;
   expectedVersion: number;
@@ -572,5 +665,123 @@ export async function disableFallbackCredential(input: {
       after: { enabled: false, version: target.fallbackCredential.version + 1 },
       correlationId: randomUUID(),
     });
+  });
+}
+
+export async function unlinkGoogleIdentity(input: {
+  identityId: string;
+  targetUserId: string;
+  expectedVersion: number;
+  reason: string;
+}) {
+  const { principal: requestPrincipal } = await requireCapability(
+    capabilities.identityUnlinkManage,
+  );
+  requireRecentAuthentication(requestPrincipal.authenticatedAt);
+  if (requestPrincipal.userId === input.targetUserId) {
+    throw new AuthorizationDeniedError();
+  }
+
+  return runSerializableMutation(async (transaction) => {
+    const { principal, actorAssignmentId } = await refreshPrincipalWithCapability(
+      requestPrincipal,
+      capabilities.identityUnlinkManage,
+      transaction,
+    );
+    if (principal.userId === input.targetUserId) {
+      throw new AuthorizationDeniedError();
+    }
+
+    const target = await transaction.user.findFirst({
+      where: { id: input.targetUserId, schoolId: principal.schoolId },
+      select: { id: true, version: true },
+    });
+    if (!target) {
+      throw new AuthorizationDeniedError();
+    }
+    if (target.version !== input.expectedVersion) {
+      throw new ConflictError();
+    }
+
+    const identity = await transaction.userIdentity.findFirst({
+      where: {
+        id: input.identityId,
+        userId: target.id,
+        provider: "GOOGLE_WORKSPACE",
+      },
+      select: { id: true, issuer: true, emailVerified: true },
+    });
+    if (!identity) {
+      throw new AuthorizationDeniedError();
+    }
+
+    const versionUpdate = await transaction.user.updateMany({
+      where: {
+        id: target.id,
+        schoolId: principal.schoolId,
+        version: input.expectedVersion,
+      },
+      data: { version: { increment: 1 } },
+    });
+    if (versionUpdate.count !== 1) {
+      throw new ConflictError();
+    }
+
+    const identityDelete = await transaction.userIdentity.deleteMany({
+      where: {
+        id: identity.id,
+        userId: target.id,
+        provider: "GOOGLE_WORKSPACE",
+      },
+    });
+    if (identityDelete.count !== 1) {
+      throw new ConflictError();
+    }
+
+    const now = new Date();
+    const revokedSessions = await transaction.session.updateMany({
+      where: {
+        userId: target.id,
+        authMethod: "GOOGLE_WORKSPACE",
+        revokedAt: null,
+        expiresAt: { gt: now },
+      },
+      data: {
+        revokedAt: now,
+        revokedByUserId: principal.userId,
+        revokeReason: input.reason,
+        version: { increment: 1 },
+      },
+    });
+
+    await appendAuditLog(transaction, {
+      schoolId: principal.schoolId,
+      principal,
+      subjectUserId: target.id,
+      actorAssignmentId,
+      eventType: "iam.identity.google.unlinked",
+      entityType: "UserIdentity",
+      entityId: identity.id,
+      action: "unlink",
+      outcome: "SUCCEEDED",
+      reason: input.reason,
+      before: {
+        provider: "GOOGLE_WORKSPACE",
+        issuer: identity.issuer,
+        emailVerified: identity.emailVerified,
+        userVersion: target.version,
+      },
+      after: {
+        linked: false,
+        userVersion: target.version + 1,
+      },
+      metadata: {
+        authMethod: "GOOGLE_WORKSPACE",
+        revokedGoogleSessionCount: revokedSessions.count,
+      },
+      correlationId: randomUUID(),
+    });
+
+    return { id: identity.id, revokedSessionCount: revokedSessions.count };
   });
 }

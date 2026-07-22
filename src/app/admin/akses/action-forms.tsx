@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import {
+  BadgeCheck,
   KeyRound,
   LoaderCircle,
   LogOut,
@@ -11,11 +12,14 @@ import {
 } from "lucide-react";
 import {
   changeUserStatus,
+  confirmGoogleIdentityLink,
   disableFallback,
   enableFallback,
   grantAssignment,
   revokeAssignment,
+  startGoogleIdentityLink,
   revokeSession,
+  unlinkGoogleIdentityAction,
   type ActionState,
 } from "./actions";
 
@@ -42,6 +46,53 @@ function PendingButton({ pending, children, danger = false }: { pending: boolean
       {pending ? <LoaderCircle className="icon-spin" aria-hidden="true" size={18} /> : null}
       {pending ? "Memproses…" : children}
     </button>
+  );
+}
+
+export function LinkGoogleIdentityForm({ targetUserId, expectedVersion }: { targetUserId: string; expectedVersion: number }) {
+  return (
+    <form action={startGoogleIdentityLink} className="action-form">
+      <input type="hidden" name="targetUserId" value={targetUserId} />
+      <input type="hidden" name="expectedVersion" value={expectedVersion} />
+      <ReasonField id={`google-link-reason-${targetUserId}`} />
+      <button className="btn btn-primary" type="submit">
+        <BadgeCheck aria-hidden="true" size={18} /> Verifikasi dengan Google
+      </button>
+    </form>
+  );
+}
+
+export function ConfirmGoogleIdentityLinkForm({ email }: { email: string }) {
+  const [state, action, pending] = useActionState(confirmGoogleIdentityLink, initialState);
+  return (
+    <form action={action} className="action-form compact-action-form">
+      <p className="impact-copy">
+        Akun Google terverifikasi <strong>{email}</strong> akan menjadi identitas login pengguna ini.
+        Email hanya informasi; kunci tautan tetap issuer dan subject Google.
+      </p>
+      <ActionFeedback state={state} />
+      <PendingButton pending={pending}>
+        <BadgeCheck aria-hidden="true" size={18} /> Konfirmasi tautan Google
+      </PendingButton>
+    </form>
+  );
+}
+
+export function UnlinkGoogleIdentityForm({ identityId, targetUserId, expectedVersion }: { identityId: string; targetUserId: string; expectedVersion: number }) {
+  const [state, action, pending] = useActionState(unlinkGoogleIdentityAction, initialState);
+  return (
+    <details className="inline-disclosure">
+      <summary><UserX aria-hidden="true" size={17} /> Lepas identitas</summary>
+      <form action={action} className="action-form compact-action-form">
+        <input type="hidden" name="identityId" value={identityId} />
+        <input type="hidden" name="targetUserId" value={targetUserId} />
+        <input type="hidden" name="expectedVersion" value={expectedVersion} />
+        <p className="impact-copy">Identitas Google dilepas dan sesi login Google aktif pengguna ini dicabut. Fallback tidak terpengaruh.</p>
+        <ReasonField id={`google-unlink-reason-${identityId}`} />
+        <ActionFeedback state={state} />
+        <PendingButton pending={pending} danger><UserX aria-hidden="true" size={18} /> Konfirmasi pelepasan</PendingButton>
+      </form>
+    </details>
   );
 }
 

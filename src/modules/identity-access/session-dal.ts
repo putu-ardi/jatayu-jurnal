@@ -3,6 +3,7 @@ import "server-only";
 import { cookies, headers } from "next/headers";
 import type { Prisma } from "@/generated/prisma/client";
 import { getDatabase } from "@/lib/database";
+import { shouldUseSecureCookies } from "@/lib/request-security";
 import { hashOpaqueToken } from "./crypto";
 import {
   authorize,
@@ -213,7 +214,7 @@ export async function setSessionCookie(token: string, expiresAt: Date) {
   const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: await shouldUseSecureCookies(),
     sameSite: "lax",
     path: "/",
     expires: expiresAt,

@@ -1,5 +1,5 @@
 const REDACTED = "[REDACTED]";
-const SENSITIVE_KEY = /(password|secret|token|cookie|authorization|credential|hash|privateStorageKey)/i;
+const SENSITIVE_KEY = /(password|secret|token|cookie|authorization|credential|hash|privateStorageKey|nonce|codeVerifier|codeChallenge|oidcState|confirmationToken)/i;
 const MAX_DEPTH = 6;
 const MAX_ARRAY_ITEMS = 100;
 const MAX_STRING_LENGTH = 2_000;
