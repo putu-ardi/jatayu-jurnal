@@ -195,7 +195,7 @@ Workflow `Foundation CI` menjalankan dua job berurutan pada Ubuntu 24.04 dan Nod
 1. install dari lockfile, lint, type-check, 67 unit/integration tests, build web/worker, serta audit dependency production dan lengkap;
 2. project Compose ephemeral unik dengan credential acak, binding Nginx loopback-only, build/start/migration, assertion hardening, invariant PostgreSQL rollback-only, bootstrap/seed, Playwright+axe, anti-reseed, scan log runtime, dan fault rehearsal Redis $200 \rightarrow 503 \rightarrow 200$.
 
-Runner selalu mencoba cleanup melalui trap dan mengunggah diagnostic hanya pada kegagalan dengan retensi tujuh hari. Script sengaja menolak eksekusi tanpa `GITHUB_ACTIONS=true` serta ID/attempt numerik; simulasi lokal hanya untuk engineering terkontrol dan harus memakai ID unik. Tersedianya workflow tidak berarti workflow GitHub atau staging sudah dijalankan—rujuk ledger untuk status bukti aktual.
+Runner selalu mencoba cleanup melalui trap dan mengunggah diagnostic hanya pada kegagalan dengan retensi tujuh hari. Script sengaja menolak eksekusi tanpa `GITHUB_ACTIONS=true` serta ID/attempt numerik; simulasi lokal hanya untuk engineering terkontrol dan harus memakai ID unik. Run GitHub `Foundation CI` pertama yang lulus tercatat pada ledger; bukti tersebut tidak berarti staging, UAT, review independen, atau sign-off sudah selesai.
 
 ## Struktur penting
 
