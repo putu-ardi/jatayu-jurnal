@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": false,
+    "incremental": false,
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "noEmit": false,
+    "outDir": "dist-worker",
+    "rootDir": "src",
+    "target": "ES2022"
+  },
+  "include": ["src/worker/**/*.ts", "src/lib/env.ts", "src/lib/queue.ts"],
+  "exclude": ["node_modules", "src/**/*.test.ts"]
+}

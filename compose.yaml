@@ -1,0 +1,211 @@
+name: ejls
+
+x-service-security: &service-security
+  read_only: true
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  restart: unless-stopped
+
+x-service-logging: &service-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  database:
+    image: postgres:17-alpine
+    user: "70:70"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+      - /var/run/postgresql:size=16m,uid=70,gid=70,mode=3777,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    logging: *service-logging
+
+  redis:
+    image: redis:8-alpine
+    user: "999:1000"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+    volumes:
+      - redis-data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    logging: *service-logging
+
+  migrate:
+    image: ejls-migrate:${APP_VERSION:-0.1.0}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrate
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}?schema=public
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - backend
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+    logging: *service-logging
+
+  bootstrap:
+    image: ejls-bootstrap:${APP_VERSION:-0.1.0}
+    profiles: ["bootstrap"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: bootstrap
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}?schema=public
+      EJLS_BOOTSTRAP_CONFIRM: ${EJLS_BOOTSTRAP_CONFIRM:-}
+      EJLS_BOOTSTRAP_ALLOW_PRODUCTION: ${EJLS_BOOTSTRAP_ALLOW_PRODUCTION:-}
+      EJLS_BOOTSTRAP_SCHOOL_CODE: ${EJLS_BOOTSTRAP_SCHOOL_CODE:-}
+      EJLS_BOOTSTRAP_SCHOOL_NAME: ${EJLS_BOOTSTRAP_SCHOOL_NAME:-}
+      EJLS_BOOTSTRAP_TIMEZONE: ${EJLS_BOOTSTRAP_TIMEZONE:-Asia/Jakarta}
+      EJLS_BOOTSTRAP_ADMIN_EMAIL: ${EJLS_BOOTSTRAP_ADMIN_EMAIL:-}
+      EJLS_BOOTSTRAP_ADMIN_NAME: ${EJLS_BOOTSTRAP_ADMIN_NAME:-}
+      EJLS_BOOTSTRAP_PASSWORD: ${EJLS_BOOTSTRAP_PASSWORD:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+    logging: *service-logging
+
+  web:
+    <<: *service-security
+    image: ejls-web:${APP_VERSION:-0.1.0}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+    environment:
+      NODE_ENV: production
+      APP_VERSION: ${APP_VERSION:-0.1.0}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      HEALTH_CHECK_TIMEOUT_MS: ${HEALTH_CHECK_TIMEOUT_MS:-3000}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    expose:
+      - "3000"
+    networks:
+      - ingress
+      - backend
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    logging: *service-logging
+
+  worker:
+    <<: *service-security
+    image: ejls-worker:${APP_VERSION:-0.1.0}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    environment:
+      NODE_ENV: production
+      APP_VERSION: ${APP_VERSION:-0.1.0}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      HEALTH_CHECK_TIMEOUT_MS: ${HEALTH_CHECK_TIMEOUT_MS:-3000}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    logging: *service-logging
+
+  nginx:
+    <<: *service-security
+    image: ejls-nginx:${APP_VERSION:-0.1.0}
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    depends_on:
+      web:
+        condition: service_healthy
+    ports:
+      - "${HTTP_BIND_ADDRESS:-0.0.0.0}:${HTTP_PORT:-8080}:8080"
+    networks:
+      - ingress
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+      - /var/cache/nginx:size=32m,nosuid,nodev
+      - /var/run:size=8m,nosuid,nodev
+    logging: *service-logging
+
+networks:
+  ingress:
+    driver: bridge
+  backend:
+    driver: bridge
+    internal: true
+
+volumes:
+  postgres-data:
+  redis-data:

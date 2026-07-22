@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated artifacts and editor-side UI/UX prompt helpers:
+    "dist-worker/**",
+    "src/generated/**",
+    ".github/prompts/**",
   ]),
 ]);
 

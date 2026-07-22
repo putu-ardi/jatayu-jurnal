@@ -12,6 +12,13 @@
 
 # testing
 /coverage
+/test-results
+/playwright-report
+/blob-report
+
+# Python tooling caches
+__pycache__/
+*.py[cod]
 
 # next.js
 /.next/
@@ -30,8 +37,16 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# environment files
 .env*
+!.env.example
+
+# generated clients and worker output
+/src/generated/prisma
+/dist-worker
+
+# local container overrides
+compose.override.yaml
 
 # vercel
 .vercel

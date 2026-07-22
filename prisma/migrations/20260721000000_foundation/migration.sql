@@ -1,0 +1,2 @@
+-- E-JLS Fase 1 foundation migration.
+-- Business-domain tables are intentionally deferred until the foundation gate passes.

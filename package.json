@@ -2,25 +2,61 @@
   "name": "jurnal-jatayu",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=24.0.0",
+    "npm": ">=11.0.0"
+  },
+  "overrides": {
+    "postcss": "8.5.21",
+    "sharp": "0.35.0"
+  },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "npm run prisma:generate && next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:browser": "playwright test",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build && npm run worker:build",
+    "prisma:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "bootstrap:first-admin": "tsx scripts/bootstrap-first-admin.ts",
+    "seed:browser-test": "tsx scripts/seed-browser-test.ts",
+    "worker:dev": "tsx watch src/worker/index.ts",
+    "worker:build": "esbuild src/worker/index.ts --bundle --packages=external --platform=node --target=node24 --format=cjs --outfile=dist-worker/index.cjs",
+    "worker:start": "node dist-worker/index.cjs"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "^7.9.0",
+    "@prisma/client": "^7.9.0",
+    "bcryptjs": "^3.0.3",
+    "bullmq": "^5.80.9",
+    "ioredis": "^5.11.1",
+    "lucide-react": "^1.25.0",
     "next": "16.2.10",
+    "pg": "^8.22.0",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "esbuild": "^0.28.1",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
+    "prisma": "^7.9.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "tsx": "^4.23.1",
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }

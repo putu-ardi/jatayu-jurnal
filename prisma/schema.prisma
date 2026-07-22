@@ -1,0 +1,399 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum ProvisioningSource {
+  GOOGLE_WORKSPACE
+  MANUAL
+  IMPORT
+}
+
+enum IdentityProvider {
+  GOOGLE_WORKSPACE
+}
+
+enum SessionAuthMethod {
+  GOOGLE_WORKSPACE
+  FALLBACK
+}
+
+enum ScopeType {
+  SELF
+  CLASS
+  PROGRAM
+  ROOM
+  SCHOOL
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AcademicPeriodStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+  ARCHIVED
+}
+
+enum BrandingRevisionStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+}
+
+enum BrandAssetStatus {
+  QUARANTINED
+  SCAN_PASSED
+  PUBLISHED
+  REJECTED
+}
+
+enum AuditOutcome {
+  SUCCEEDED
+  DENIED
+  FAILED
+}
+
+model School {
+  id                String             @id @default(uuid()) @db.Uuid
+  code              String             @unique @db.VarChar(32)
+  name              String             @db.VarChar(120)
+  timezone          String             @default("Asia/Jakarta") @db.VarChar(64)
+  createdAt         DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime           @updatedAt @db.Timestamptz(3)
+  settings          SchoolSettings?
+  users             User[]
+  assignments       RoleAssignment[]
+  academicPeriods   AcademicPeriod[]
+  brandingRevisions BrandingRevision[]
+  brandAssets       BrandAsset[]
+  auditLogs         AuditLog[]
+
+  @@map("schools")
+}
+
+model SchoolSettings {
+  id                          String            @id @default(uuid()) @db.Uuid
+  schoolId                    String            @unique @db.Uuid
+  effectiveBrandingRevisionId String?           @unique @db.Uuid
+  version                     Int               @default(1)
+  createdAt                   DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt                   DateTime          @updatedAt @db.Timestamptz(3)
+  school                      School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  effectiveBrandingRevision   BrandingRevision? @relation("EffectiveBranding", fields: [effectiveBrandingRevisionId], references: [id], onDelete: Restrict)
+
+  @@map("school_settings")
+}
+
+model User {
+  id                  String             @id @default(uuid()) @db.Uuid
+  schoolId            String             @db.Uuid
+  email               String             @db.VarChar(254)
+  username            String?            @db.VarChar(64)
+  fullName            String             @db.VarChar(120)
+  status              UserStatus         @default(INVITED)
+  provisioningSource  ProvisioningSource
+  version             Int                @default(1)
+  lastLoginAt         DateTime?           @db.Timestamptz(3)
+  deactivatedAt       DateTime?           @db.Timestamptz(3)
+  createdAt           DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime            @updatedAt @db.Timestamptz(3)
+  school              School              @relation(fields: [schoolId], references: [id], onDelete: Restrict)
+  identities          UserIdentity[]
+  assignments         RoleAssignment[]    @relation("AssignedUser")
+  grantedAssignments  RoleAssignment[]    @relation("AssignmentGrantor")
+  revokedAssignments  RoleAssignment[]    @relation("AssignmentRevoker")
+  sessions            Session[]           @relation("UserSessions")
+  revokedSessions     Session[]           @relation("SessionRevoker")
+  fallbackCredential  FallbackCredential?
+  createdPeriods      AcademicPeriod[]    @relation("PeriodCreator")
+  activatedPeriods    AcademicPeriod[]    @relation("PeriodActivator")
+  createdBranding     BrandingRevision[]  @relation("BrandingCreator")
+  publishedBranding   BrandingRevision[]  @relation("BrandingPublisher")
+  uploadedBrandAssets BrandAsset[]        @relation("BrandAssetUploader")
+  actorAuditLogs      AuditLog[]          @relation("AuditActor")
+  subjectAuditLogs    AuditLog[]          @relation("AuditSubject")
+
+  @@unique([schoolId, email])
+  @@unique([schoolId, username])
+  @@index([schoolId, status, fullName])
+  @@map("users")
+}
+
+model UserIdentity {
+  id            String           @id @default(uuid()) @db.Uuid
+  userId        String           @db.Uuid
+  provider      IdentityProvider
+  issuer        String           @db.VarChar(255)
+  subject       String           @db.VarChar(255)
+  emailAtLink   String           @db.VarChar(254)
+  emailVerified Boolean          @default(false)
+  linkedAt      DateTime         @default(now()) @db.Timestamptz(3)
+  lastUsedAt    DateTime?        @db.Timestamptz(3)
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, issuer, subject])
+  @@unique([userId, provider, issuer])
+  @@index([userId])
+  @@map("user_identities")
+}
+
+model Role {
+  id              String              @id @default(uuid()) @db.Uuid
+  key             String              @unique @db.VarChar(64)
+  name            String              @db.VarChar(80)
+  description     String              @db.VarChar(240)
+  riskLevel       RiskLevel           @default(LOW)
+  isSystem        Boolean             @default(true)
+  createdAt       DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime            @updatedAt @db.Timestamptz(3)
+  permissions     RolePermission[]
+  assignments     RoleAssignment[]
+  grantBoundaries RoleGrantBoundary[] @relation("GrantableRole")
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  key         String           @unique @db.VarChar(96)
+  description String           @db.VarChar(240)
+  riskLevel   RiskLevel        @default(LOW)
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model RoleAssignment {
+  id                String              @id @default(uuid()) @db.Uuid
+  schoolId          String              @db.Uuid
+  userId            String              @db.Uuid
+  roleId            String              @db.Uuid
+  scopeType         ScopeType
+  scopeReference    String?             @db.VarChar(128)
+  scopeLabel        String              @db.VarChar(120)
+  activeFrom        DateTime            @db.Timestamptz(3)
+  activeUntil       DateTime?           @db.Timestamptz(3)
+  revokedAt         DateTime?           @db.Timestamptz(3)
+  grantedByUserId   String?             @db.Uuid
+  revokedByUserId   String?             @db.Uuid
+  grantReason       String              @db.VarChar(500)
+  revokeReason      String?             @db.VarChar(500)
+  version           Int                 @default(1)
+  createdAt         DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime            @updatedAt @db.Timestamptz(3)
+  school            School              @relation(fields: [schoolId], references: [id], onDelete: Restrict)
+  user              User                @relation("AssignedUser", fields: [userId], references: [id], onDelete: Restrict)
+  role              Role                @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  grantedByUser     User?               @relation("AssignmentGrantor", fields: [grantedByUserId], references: [id], onDelete: SetNull)
+  revokedByUser     User?               @relation("AssignmentRevoker", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+  grantBoundaries   RoleGrantBoundary[] @relation("ActorAssignmentBoundary")
+  auditLogs         AuditLog[]          @relation("AuditActorAssignment")
+
+  @@index([schoolId, userId, revokedAt])
+  @@index([schoolId, roleId, scopeType, scopeReference])
+  @@map("role_assignments")
+}
+
+model RoleGrantBoundary {
+  id                    String         @id @default(uuid()) @db.Uuid
+  actorAssignmentId     String         @db.Uuid
+  grantableRoleId       String         @db.Uuid
+  boundaryScopeType     ScopeType
+  boundaryScopeReference String?       @db.VarChar(128)
+  actorAssignment       RoleAssignment @relation("ActorAssignmentBoundary", fields: [actorAssignmentId], references: [id], onDelete: Cascade)
+  grantableRole         Role           @relation("GrantableRole", fields: [grantableRoleId], references: [id], onDelete: Restrict)
+
+  @@unique([actorAssignmentId, grantableRoleId, boundaryScopeType, boundaryScopeReference])
+  @@map("role_grant_boundaries")
+}
+
+model Session {
+  id              String            @id @default(uuid()) @db.Uuid
+  userId          String            @db.Uuid
+  tokenHash       String            @unique @db.Char(64)
+  authMethod      SessionAuthMethod
+  authenticatedAt DateTime          @db.Timestamptz(3)
+  lastSeenAt      DateTime          @db.Timestamptz(3)
+  expiresAt       DateTime          @db.Timestamptz(3)
+  revokedAt       DateTime?         @db.Timestamptz(3)
+  revokedByUserId String?           @db.Uuid
+  revokeReason    String?           @db.VarChar(500)
+  userAgentHash   String?           @db.Char(64)
+  deviceLabel     String?           @db.VarChar(80)
+  version         Int               @default(1)
+  createdAt       DateTime          @default(now()) @db.Timestamptz(3)
+  user            User              @relation("UserSessions", fields: [userId], references: [id], onDelete: Cascade)
+  revokedByUser   User?             @relation("SessionRevoker", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([userId, revokedAt, expiresAt])
+  @@map("sessions")
+}
+
+model FallbackCredential {
+  id                String    @id @default(uuid()) @db.Uuid
+  userId            String    @unique @db.Uuid
+  passwordHash      String    @db.VarChar(255)
+  enabledAt         DateTime  @db.Timestamptz(3)
+  disabledAt        DateTime? @db.Timestamptz(3)
+  failedAttempts    Int       @default(0)
+  lockedUntil       DateTime? @db.Timestamptz(3)
+  passwordChangedAt DateTime  @db.Timestamptz(3)
+  version           Int       @default(1)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(3)
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("fallback_credentials")
+}
+
+model AcademicPeriod {
+  id            String               @id @default(uuid()) @db.Uuid
+  schoolId      String               @db.Uuid
+  code          String               @db.VarChar(32)
+  name          String               @db.VarChar(120)
+  startsOn      DateTime             @db.Date
+  endsOn        DateTime             @db.Date
+  status        AcademicPeriodStatus @default(DRAFT)
+  version       Int                  @default(1)
+  createdById   String               @db.Uuid
+  activatedById String?              @db.Uuid
+  activatedAt   DateTime?            @db.Timestamptz(3)
+  closedAt      DateTime?            @db.Timestamptz(3)
+  createdAt     DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime             @updatedAt @db.Timestamptz(3)
+  school        School               @relation(fields: [schoolId], references: [id], onDelete: Restrict)
+  createdBy     User                 @relation("PeriodCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  activatedBy   User?                @relation("PeriodActivator", fields: [activatedById], references: [id], onDelete: Restrict)
+
+  @@unique([schoolId, code])
+  @@index([schoolId, status, startsOn])
+  @@map("academic_periods")
+}
+
+model BrandingRevision {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  schoolId              String                 @db.Uuid
+  revisionNumber        Int
+  status                BrandingRevisionStatus @default(DRAFT)
+  version               Int                    @default(1)
+  applicationName       String                 @db.VarChar(80)
+  shortName             String                 @db.VarChar(24)
+  schoolName            String                 @db.VarChar(120)
+  slogan                String?                @db.VarChar(140)
+  logoAltText           String?                @db.VarChar(120)
+  themePreset           String                 @default("jatayu-blue") @db.VarChar(48)
+  primaryColor          String?                @db.Char(7)
+  footerText            String?                @db.VarChar(200)
+  supportText           String?                @db.VarChar(120)
+  footerLinks           Json                   @default("[]")
+  showBuildVersion      Boolean                @default(true)
+  primaryLogoAssetId    String?                @db.Uuid
+  inverseLogoAssetId    String?                @db.Uuid
+  applicationIconAssetId String?               @db.Uuid
+  footerLogoAssetId     String?                @db.Uuid
+  changeReason          String?                @db.VarChar(500)
+  createdById           String                 @db.Uuid
+  publishedById         String?                @db.Uuid
+  publishedAt           DateTime?              @db.Timestamptz(3)
+  createdAt             DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime               @updatedAt @db.Timestamptz(3)
+  school                School                 @relation(fields: [schoolId], references: [id], onDelete: Restrict)
+  createdBy             User                   @relation("BrandingCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  publishedBy           User?                  @relation("BrandingPublisher", fields: [publishedById], references: [id], onDelete: Restrict)
+  primaryLogoAsset      BrandAsset?            @relation("PrimaryLogo", fields: [primaryLogoAssetId], references: [id], onDelete: Restrict)
+  inverseLogoAsset      BrandAsset?            @relation("InverseLogo", fields: [inverseLogoAssetId], references: [id], onDelete: Restrict)
+  applicationIconAsset BrandAsset?             @relation("ApplicationIcon", fields: [applicationIconAssetId], references: [id], onDelete: Restrict)
+  footerLogoAsset       BrandAsset?             @relation("FooterLogo", fields: [footerLogoAssetId], references: [id], onDelete: Restrict)
+  effectiveFor          SchoolSettings?         @relation("EffectiveBranding")
+
+  @@unique([schoolId, revisionNumber])
+  @@index([schoolId, status, createdAt])
+  @@map("branding_revisions")
+}
+
+model BrandAsset {
+  id                       String             @id @default(uuid()) @db.Uuid
+  schoolId                 String             @db.Uuid
+  status                   BrandAssetStatus   @default(QUARANTINED)
+  mediaType                String             @db.VarChar(32)
+  byteSize                 Int
+  width                    Int
+  height                   Int
+  sha256                   String             @db.Char(64)
+  privateStorageKey        String             @db.VarChar(255)
+  publishedStorageKey      String?            @db.VarChar(255)
+  originalFileName         String?            @db.VarChar(160)
+  uploadedById             String             @db.Uuid
+  scannedAt                DateTime?           @db.Timestamptz(3)
+  publishedAt              DateTime?           @db.Timestamptz(3)
+  createdAt                DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt                DateTime            @updatedAt @db.Timestamptz(3)
+  school                   School              @relation(fields: [schoolId], references: [id], onDelete: Restrict)
+  uploadedBy               User                @relation("BrandAssetUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  primaryLogoRevisions     BrandingRevision[]  @relation("PrimaryLogo")
+  inverseLogoRevisions     BrandingRevision[]  @relation("InverseLogo")
+  applicationIconRevisions BrandingRevision[]  @relation("ApplicationIcon")
+  footerLogoRevisions      BrandingRevision[]  @relation("FooterLogo")
+
+  @@unique([schoolId, sha256])
+  @@index([schoolId, status, createdAt])
+  @@map("brand_assets")
+}
+
+model AuditLog {
+  id                      String          @id @default(uuid()) @db.Uuid
+  sequence                BigInt          @unique @default(autoincrement())
+  schoolId                String          @db.Uuid
+  actorUserId             String?         @db.Uuid
+  subjectUserId           String?         @db.Uuid
+  actorAssignmentId       String?         @db.Uuid
+  actorAssignmentSnapshot Json?
+  eventType               String          @db.VarChar(96)
+  entityType              String          @db.VarChar(64)
+  entityId                String?         @db.VarChar(128)
+  action                  String          @db.VarChar(96)
+  outcome                 AuditOutcome
+  reason                  String?         @db.VarChar(500)
+  before                  Json?
+  after                   Json?
+  metadata                Json?
+  correlationId           String          @db.VarChar(64)
+  occurredAt              DateTime        @default(now()) @db.Timestamptz(3)
+  school                  School          @relation(fields: [schoolId], references: [id], onDelete: Restrict)
+  actorUser               User?           @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  subjectUser             User?           @relation("AuditSubject", fields: [subjectUserId], references: [id], onDelete: SetNull)
+  actorAssignment         RoleAssignment? @relation("AuditActorAssignment", fields: [actorAssignmentId], references: [id], onDelete: SetNull)
+
+  @@index([schoolId, occurredAt])
+  @@index([schoolId, entityType, entityId, occurredAt])
+  @@index([schoolId, actorUserId, occurredAt])
+  @@index([schoolId, subjectUserId, occurredAt])
+  @@map("audit_logs")
+}

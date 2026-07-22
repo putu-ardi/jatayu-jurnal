@@ -1,0 +1,15 @@
+.git
+.github
+.next
+node_modules
+dist-worker
+coverage
+test-results
+playwright-report
+blob-report
+*.log
+.env
+.env.*
+!.env.example
+.vscode
+README.md

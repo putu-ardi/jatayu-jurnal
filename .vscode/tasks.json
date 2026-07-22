@@ -1,0 +1,20 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "E-JLS: Verify foundation",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"check"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$eslint-stylish",
+				"$tsc"
+			],
+			"group": "test"
+		}
+	]
+}
