@@ -1,5 +1,6 @@
 export const capabilities = {
   usersRead: "iam.users.read",
+  usersProvision: "iam.users.provision",
   userStatusManage: "iam.users.status.manage",
   assignmentsGrant: "iam.assignments.grant",
   assignmentsRevoke: "iam.assignments.revoke",

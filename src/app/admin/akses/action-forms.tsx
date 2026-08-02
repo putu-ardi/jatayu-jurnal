@@ -7,6 +7,7 @@ import {
   LoaderCircle,
   LogOut,
   ShieldMinus,
+  UserPlus,
   UserRoundCog,
   UserX,
 } from "lucide-react";
@@ -16,6 +17,7 @@ import {
   disableFallback,
   enableFallback,
   grantAssignment,
+  provisionUser,
   revokeAssignment,
   startGoogleIdentityLink,
   revokeSession,
@@ -46,6 +48,36 @@ function PendingButton({ pending, children, danger = false }: { pending: boolean
       {pending ? <LoaderCircle className="icon-spin" aria-hidden="true" size={18} /> : null}
       {pending ? "Memproses…" : children}
     </button>
+  );
+}
+
+export function ProvisionUserForm() {
+  const [state, action, pending] = useActionState(provisionUser, initialState);
+  return (
+    <form action={action} className="action-form form-grid">
+      <div className="field-group">
+        <label htmlFor="provision-full-name">Nama lengkap</label>
+        <input className="input" id="provision-full-name" name="fullName" required minLength={3} maxLength={120} autoComplete="name" />
+      </div>
+      <div className="field-group">
+        <label htmlFor="provision-email">Email sekolah</label>
+        <input className="input" id="provision-email" name="email" type="email" required maxLength={254} autoComplete="email" />
+      </div>
+      <div className="field-group form-grid-full">
+        <label htmlFor="provision-username">Username <span className="optional">(opsional)</span></label>
+        <input className="input" id="provision-username" name="username" maxLength={64} pattern="[A-Za-z0-9._-]+" autoComplete="username" aria-describedby="provision-username-help" />
+        <p className="field-help" id="provision-username-help">Hanya huruf, angka, titik, garis bawah, dan tanda hubung. Tidak ada password yang dibuat otomatis.</p>
+      </div>
+      <div className="form-grid-full">
+        <ReasonField id="provision-reason" />
+      </div>
+      <div className="form-grid-full">
+        <ActionFeedback state={state} />
+      </div>
+      <PendingButton pending={pending}>
+        <UserPlus aria-hidden="true" size={18} /> Buat pengguna aktif
+      </PendingButton>
+    </form>
   );
 }
 

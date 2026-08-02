@@ -2,14 +2,15 @@
 
 import Image from "next/image";
 import { useActionState, useEffect, useState } from "react";
-import { ArrowRight, KeyRound, LoaderCircle, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, KeyRound, LoaderCircle, RefreshCw, ShieldCheck } from "lucide-react";
 import type { CaptchaChallenge } from "@/modules/identity-access/captcha-types";
 import { loginWithFallback, type LoginState } from "./actions";
 
 const initialState: LoginState = undefined;
 
-export function LoginForm() {
+export function LoginForm({ schoolCode }: { schoolCode?: string }) {
   const [state, formAction, pending] = useActionState(loginWithFallback, initialState);
+  const [showPassword, setShowPassword] = useState(false);
   const [loadedChallenge, setLoadedChallenge] = useState<{
     requestKey: string;
     value: CaptchaChallenge;
@@ -73,11 +74,14 @@ export function LoginForm() {
           inputMode="text"
           maxLength={32}
           pattern="[A-Za-z0-9-]+"
+          defaultValue={schoolCode}
           aria-describedby="school-code-help"
           required
         />
         <p className="field-help" id="school-code-help">
-          Gunakan kode yang diberikan pengelola sekolah.
+          {schoolCode
+            ? `Kode sekolah aktif: ${schoolCode}. Ubah hanya jika Admin Akses memberikan kode lain.`
+            : "Gunakan kode yang diberikan pengelola sekolah."}
         </p>
       </div>
 
@@ -98,15 +102,30 @@ export function LoginForm() {
 
       <div className="field-group">
         <label htmlFor="password">Kata sandi</label>
-        <input
-          className="input"
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          maxLength={128}
-          required
-        />
+        <div className="password-input-wrapper">
+          <input
+            className="input password-input"
+            id="password"
+            name="password"
+            type={showPassword ? "text" : "password"}
+            autoComplete="current-password"
+            maxLength={128}
+            required
+          />
+          <button
+            className="password-toggle"
+            type="button"
+            onClick={() => setShowPassword((visible) => !visible)}
+            aria-label={showPassword ? "Sembunyikan kata sandi" : "Tampilkan kata sandi"}
+            aria-pressed={showPassword}
+          >
+            {showPassword ? (
+              <EyeOff aria-hidden="true" size={20} />
+            ) : (
+              <Eye aria-hidden="true" size={20} />
+            )}
+          </button>
+        </div>
       </div>
 
       <fieldset className="captcha-fieldset" aria-describedby="captcha-help captcha-status">

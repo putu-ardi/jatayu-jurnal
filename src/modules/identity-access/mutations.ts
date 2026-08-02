@@ -124,6 +124,59 @@ async function runSerializableMutation<T>(
   }
 }
 
+export async function provisionManualUser(input: {
+  email: string;
+  username: string | null;
+  fullName: string;
+  reason: string;
+}) {
+  const { principal: requestPrincipal } = await requireCapability(
+    capabilities.usersProvision,
+  );
+  requireRecentAuthentication(requestPrincipal.authenticatedAt);
+
+  return runSerializableMutation(async (transaction) => {
+    const { principal, actorAssignmentId } = await refreshPrincipalWithCapability(
+      requestPrincipal,
+      capabilities.usersProvision,
+      transaction,
+    );
+    const user = await transaction.user.create({
+      data: {
+        schoolId: principal.schoolId,
+        email: input.email.trim().toLowerCase(),
+        username: input.username?.trim().toLowerCase() || null,
+        fullName: input.fullName.trim(),
+        status: "ACTIVE",
+        provisioningSource: "MANUAL",
+      },
+      select: { id: true, version: true },
+    });
+
+    await appendAuditLog(transaction, {
+      schoolId: principal.schoolId,
+      principal,
+      subjectUserId: user.id,
+      actorAssignmentId,
+      eventType: "iam.user.provisioned",
+      entityType: "User",
+      entityId: user.id,
+      action: "provision-manual",
+      outcome: "SUCCEEDED",
+      reason: input.reason,
+      after: {
+        status: "ACTIVE",
+        provisioningSource: "MANUAL",
+        usernameProvided: Boolean(input.username),
+        version: user.version,
+      },
+      correlationId: randomUUID(),
+    });
+
+    return { id: user.id };
+  });
+}
+
 export async function updateUserStatus(input: {
   targetUserId: string;
   status: "INVITED" | "ACTIVE" | "SUSPENDED" | "DEACTIVATED";

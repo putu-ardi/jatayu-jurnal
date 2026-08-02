@@ -101,14 +101,16 @@ Nilai domain dan redirect URI harus dicocokkan dengan environment, bukan dibentu
 
 SSO hanya membuktikan identitas Google; SSO tidak otomatis membuat user atau memberikan role E-JLS.
 
-1. Deploy migration permission terbaru. Hanya role sistem `admin-akses` yang menerima `iam.identities.link` dan `iam.identities.unlink` (keduanya `CRITICAL`).
-2. Admin Akses memilih user E-JLS target dalam school yang dikelolanya. Target tidak boleh akun admin itu sendiri dan linking hanya diizinkan ketika target berstatus tepat `ACTIVE`.
-3. Admin menulis alasan minimal 12 karakter; sistem mensyaratkan sesi actor dan autentikasi terbaru.
-4. Admin memilih **Verifikasi dengan Google**, lalu masuk secara interaktif dengan akun Google milik target.
-5. Callback linking memvalidasi purpose, callback exact, school, actor/session, target/version, PKCE, state, nonce, `iss`, `aud`, `azp`, `exp`, `sub`, `hd`, dan `email_verified`.
-6. Sistem kembali ke Admin Akses dan menampilkan email Google terverifikasi untuk review. Confirmation server-side hanya berlaku satu kali selama sepuluh menit.
-7. Admin memilih **Konfirmasi tautan Google**. Sistem kembali memvalidasi actor/session/tenant/target/version, memastikan `(provider, issuer, subject)` belum dipakai user lain, lalu menulis `UserIdentity` dan audit dalam transaksi serializable.
-8. Callback/linking tidak pernah menerbitkan sesi login. Audit memuat actor, target, provider, issuer, outcome, reason, dan version tanpa menduplikasi subject/email federasi.
+1. Deploy seluruh migration permission terbaru. Role sistem `admin-akses` menerima `iam.users.provision`, `iam.identities.link`, dan `iam.identities.unlink` sesuai katalog foundation.
+2. Bila user target belum ada, Admin Akses membuka `/admin/akses`, panel **Buat pengguna manual**, lalu mengisi nama lengkap, email sekolah, username opsional, dan alasan minimal 12 karakter. Sistem memerlukan autentikasi terbaru dan mengambil school hanya dari principal actor.
+3. Provisioning membuat tepat satu user `ACTIVE` dengan sumber `MANUAL` dan identifier ternormalisasi. Sistem tidak membuat password, role, identitas Google, atau sesi otomatis. Jangan memakai ulang bootstrap pertama, seed browser test, atau direct SQL untuk provisioning operasional.
+4. Admin Akses memilih user E-JLS target dalam school yang dikelolanya. Target tidak boleh akun admin itu sendiri dan linking hanya diizinkan ketika target berstatus tepat `ACTIVE`.
+5. Admin menulis alasan minimal 12 karakter; sistem mensyaratkan sesi actor dan autentikasi terbaru.
+6. Admin memilih **Verifikasi dengan Google**, lalu masuk secara interaktif dengan akun Google milik target.
+7. Callback linking memvalidasi purpose, callback exact, school, actor/session, target/version, PKCE, state, nonce, `iss`, `aud`, `azp`, `exp`, `sub`, `hd`, dan `email_verified`.
+8. Sistem kembali ke Admin Akses dan menampilkan email Google terverifikasi untuk review. Confirmation server-side hanya berlaku satu kali selama sepuluh menit.
+9. Admin memilih **Konfirmasi tautan Google**. Sistem kembali memvalidasi actor/session/tenant/target/version, memastikan `(provider, issuer, subject)` belum dipakai user lain, lalu menulis `UserIdentity` dan audit dalam transaksi serializable.
+10. Callback/linking tidak pernah menerbitkan sesi login. Audit memuat actor, target, provider, issuer, outcome, reason, dan version tanpa menduplikasi subject/email federasi.
 
 Email hanya informasi review dan snapshot pada record identity. Perbedaan email Google dan email E-JLS bukan dasar auto-link, penolakan otomatis, atau pemindahan identity. Perubahan alamat email Google tidak memutus identity karena lookup memakai `sub`. Suspend/deactivate user E-JLS menolak login berikutnya; role tetap dikelola melalui policy Identity & Access.
 
@@ -165,8 +167,8 @@ Aktivasi produksi hanya boleh dilakukan setelah seluruh baris memiliki bukti dan
 3. Aktifkan flag pada satu environment/replica sesuai change window, lalu uji akun linked yang disetujui.
 4. Pantau success/denial rate, callback latency, token validation errors, rate-limit events, dan audit outcomes tanpa mencatat token.
 5. Rollback dengan menonaktifkan flag terlebih dahulu bila ada anomali. Fallback login tetap menjadi jalur pemulihan.
-6. Jika client secret terpapar atau redicara manual atau sebagai rollback otomatis; lakukan unlink melalui mutasi Admin Aksessi secret, cabut sesi terdampak bila perlu, dan jalankan incident process.
-7. Jangan menghapus identity database sebagai rollback otomatis; lakukan unlink melalui mutasi admin yang diaudit.
+6. Jika client secret terpapar atau dicurigai bocor, nonaktifkan flag, rotasi secret, cabut sesi terdampak bila perlu, dan jalankan incident process.
+7. Jangan menghapus identity database secara manual atau sebagai rollback otomatis; lakukan unlink melalui mutasi Admin Akses yang diaudit.
 
 ## Informasi operator untuk aktivasi nyata
 

@@ -40,6 +40,7 @@ export const SYSTEM_ROLES = [
 
 export const PERMISSION_DESCRIPTIONS: Record<string, string> = {
   [capabilities.usersRead]: "Membaca daftar dan detail pengguna dalam scope.",
+  [capabilities.usersProvision]: "Membuat akun pengguna manual dalam scope.",
   [capabilities.userStatusManage]: "Mengubah lifecycle pengguna dalam scope.",
   [capabilities.assignmentsGrant]: "Memberi penugasan sesuai grant boundary.",
   [capabilities.assignmentsRevoke]: "Mencabut penugasan sesuai grant boundary.",

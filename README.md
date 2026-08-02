@@ -1,6 +1,6 @@
 # E-JLS — Fondasi Produksi dan Identity & Access
 
-Workspace produksi untuk Elektronik Jurnal dan Laboratorium Sekolah (E-JLS) SMK Jatayu. Fondasi Docker dan modul P-10 Identity & Access telah tersedia: login fallback tenant-qualified dengan CAPTCHA matematika lokal, sesi yang dapat dicabut, policy capability/scope/grant-boundary, manajemen pengguna, dan audit privilege. Login Google Workspace belum dikonfigurasi dan tidak ditampilkan sebagai opsi aktif.
+Workspace produksi untuk Elektronik Jurnal dan Laboratorium Sekolah (E-JLS) SMK Jatayu. Fondasi Docker dan modul P-10 Identity & Access telah tersedia: login fallback tenant-qualified dengan CAPTCHA matematika lokal, sesi yang dapat dicabut, policy capability/scope/grant-boundary, manajemen pengguna, dan audit privilege. Google Workspace OIDC telah dikonfigurasi pada deployment lokal saat ini; login Google tetap mensyaratkan identity yang sudah ditautkan secara eksplisit dan bukan bukti kesiapan staging/produksi.
 
 Jurnal, absensi, statistik, dan workflow bisnis lain belum diimplementasikan. Dokumen PRD, perancangan, discovery, backlog, design system, dan prototipe Fase 0 tetap berada di folder induk dan tidak boleh diubah dari workspace produksi ini. Status implementasi ini tidak menyatakan persetujuan stakeholder atas keputusan produk yang masih terbuka. Lihat `docs/foundation-gate-ledger.md` untuk bukti, blocker, otoritas penutup, dan status Foundation **Belum diterima**.
 
@@ -14,7 +14,7 @@ Jurnal, absensi, statistik, dan workflow bisnis lain belum diimplementasikan. Do
 - Docker Compose sebagai jalur runtime produksi-lokal yang utama.
 - GitHub Actions untuk quality gate serta evidence Docker/database/browser/accessibility yang terisolasi.
 
-Keputusan arsitektur dicatat di `docs/adr/0001-foundation-stack.md`. Rehearsal deployment target mengikuti `docs/runbooks/staging-foundation.md`; runbook tersedia, tetapi belum membuktikan bahwa staging telah dijalankan. Prosedur persiapan SSO Google Workspace Education ada di `docs/runbooks/google-workspace-sso.md`; SSO tetap nonaktif sampai metadata, approval, dan acceptance checklist lengkap.
+Keputusan arsitektur dicatat di `docs/adr/0001-foundation-stack.md`. Rehearsal deployment target mengikuti `docs/runbooks/staging-foundation.md`; runbook tersedia, tetapi belum membuktikan bahwa staging telah dijalankan. Prosedur aktivasi dan acceptance SSO Google Workspace Education ada di `docs/runbooks/google-workspace-sso.md`. Konfigurasi OIDC lokal tidak menggantikan metadata HTTPS final, approval identity/security, pengujian akun tertaut di staging, atau acceptance checklist lingkungan target.
 
 ## Topologi runtime
 
@@ -130,6 +130,8 @@ Readiness hanya mengembalikan status `up`/`down` dan tidak mengekspos exception,
 - CAPTCHA hanya memberi friksi bot ringan dan masih memerlukan review aksesibilitas manual; jangan menganggapnya pengganti rate limit, lockout, MFA, atau proteksi abuse berlapis.
 - Landing setelah login mengikuti capability yang sudah diimplementasikan: principal P-10 diarahkan ke `/admin/akses`, sedangkan principal valid tanpa P-10 tetap pada workspace netral dan tidak diberi tautan Admin palsu.
 - Direktori pengguna P-10 menyediakan page size allowlist 10/25/50/100 (default 25); filter, halaman, page size, dan detail terpilih dipertahankan secara aman pada navigasi yang relevan.
+- Admin Akses dengan capability `iam.users.provision` dapat membuat user tenant-qualified melalui UI P-10 setelah autentikasi terbaru. Mutasi menormalisasi email/username, membuat tepat satu user `ACTIVE`/`MANUAL`, dan menulis audit atomik; tidak ada password, role, identitas Google, atau sesi yang dibuat otomatis.
+- Provisioning pengguna operasional tidak boleh memakai ulang bootstrap pertama, seed browser disposable, atau direct SQL. Duplicate email/username diperlakukan sebagai konflik generik; akses baru diberikan terpisah melalui grant boundary dan explicit identity linking yang diaudit.
 - Password fallback di-hash bcrypt cost 12, maksimal 72 byte, minimal 12 karakter, dan wajib memuat huruf kecil, huruf besar, angka, serta simbol.
 - Lima kegagalan fallback mengunci credential selama 15 menit. Counter dinaikkan secara atomik agar upaya paralel tidak hilang. Login sukses mengunci dan memvalidasi ulang status user/credential sebelum session diterbitkan; race menghasilkan kegagalan generik tanpa cookie. Nginx juga membatasi POST `/login` per IP menjadi 5 request/menit dengan burst 4 dan respons 429.
 - Limiter Nginx berbasis IP dan state lokal proses; evaluasi kembali trusted proxy/real-IP bila ingress berada di belakang load balancer. Jangan menjalankan web sebagai ingress publik langsung.
@@ -142,7 +144,7 @@ Readiness hanya mengembalikan status `up`/`down` dan tidak mengekspos exception,
 - Suspend/deactivate mencabut seluruh sesi aktif. Mutasi berversi menggunakan optimistic concurrency; serialization, deadlock, unique, dan exclusion conflict dipetakan menjadi konflik aman yang meminta operator memuat ulang.
 - PostgreSQL menolak active role assignment dengan tenant/user/role/scope dan rentang efektif yang overlap, termasuk pada grant konkuren. Kode sekolah dan email tenant juga unik secara case-insensitive.
 - Audit actor dan subject dipisahkan, metadata diredaksi, dan tabel audit append-only di database.
-- Model identitas Google Workspace tersedia untuk fondasi data, tetapi login Google belum dikonfigurasi.
+- Model identitas Google Workspace, authorization/link callback terpisah, validasi state/nonce/PKCE, dan explicit linking telah tersedia. Login Google hanya menerima user `ACTIVE` dengan identity `(issuer, subject)` yang sudah ditautkan; alamat email tidak digunakan untuk auto-link.
 
 ## Pengembangan lokal
 
@@ -195,7 +197,7 @@ Instal browser satu kali dengan `npx playwright install chromium`. Isi `E2E_BASE
 
 Workflow `Foundation CI` menjalankan dua job berurutan pada Ubuntu 24.04 dan Node.js 24.16.0:
 
-1. install dari lockfile, lint, type-check, 67 unit/integration tests, build web/worker, serta audit dependency production dan lengkap;
+1. install dari lockfile, lint, type-check, 141 unit/integration tests, build web/worker, serta audit dependency production dan lengkap;
 2. project Compose ephemeral unik dengan credential acak, binding Nginx loopback-only, build/start/migration, assertion hardening, invariant PostgreSQL rollback-only, bootstrap/seed, Playwright+axe, anti-reseed, scan log runtime, dan fault rehearsal Redis $200 \rightarrow 503 \rightarrow 200$.
 
 Runner selalu mencoba cleanup melalui trap dan mengunggah diagnostic hanya pada kegagalan dengan retensi tujuh hari. Script sengaja menolak eksekusi tanpa `GITHUB_ACTIONS=true` serta ID/attempt numerik; simulasi lokal hanya untuk engineering terkontrol dan harus memakai ID unik. Run GitHub `Foundation CI` pertama yang lulus tercatat pada ledger; bukti tersebut tidak berarti staging, UAT, review independen, atau sign-off sudah selesai.
@@ -225,7 +227,7 @@ Setelah stack hidup, pastikan:
 - hanya Nginx yang memiliki `PublishedPort`;
 - semua service berjalan non-root, menggunakan root filesystem read-only, `no-new-privileges`, dan `cap_drop: ALL`.
 
-Package override mengunci PostCSS `8.5.21` karena Next.js 16.2.10 membawa versi terdampak CVE-2026-41305, serta Sharp `0.35.0` karena graph Next.js sebelumnya membawa versi terdampak GHSA-f88m-g3jw-g9cj. Hapus override hanya setelah versi Next.js terverifikasi membawa dependency terpatch dan `npm audit` tetap nol.
+Next.js dan `eslint-config-next` dikunci pada patch keamanan `16.2.11`. Package override tetap mengunci PostCSS `8.5.21` untuk CVE-2026-41305 dan Sharp `0.35.0` untuk GHSA-f88m-g3jw-g9cj; audit dependency produksi dan lengkap pada snapshot 23 Juli 2026 melaporkan nol vulnerability. Hapus override hanya setelah graph dependency pengganti terverifikasi dan kedua audit tetap nol.
 
 ## Baseline keamanan
 

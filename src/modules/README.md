@@ -19,4 +19,4 @@ Modules may share infrastructure from `src/lib`, but they must not reach across 
 
 The worker in `src/worker` consumes BullMQ jobs and delegates domain work back to exported module application services. It must not become a second business layer.
 
-The active P-10 implementation does not authorize development of the planned business capabilities, and Google Workspace login remains unconfigured.
+The active P-10 implementation does not authorize development of the planned business capabilities. Google Workspace OIDC and explicit identity linking are implemented, but deployment configuration and local enablement do not replace staging acceptance, identity-admin linking, security review, or stakeholder sign-off.

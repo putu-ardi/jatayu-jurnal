@@ -4,7 +4,7 @@
 		{
 			"label": "E-JLS: Verify foundation",
 			"type": "shell",
-			"command": "npm",
+			"command": "npm.cmd",
 			"args": [
 				"run",
 				"check"

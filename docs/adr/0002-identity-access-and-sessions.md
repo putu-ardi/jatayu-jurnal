@@ -15,6 +15,8 @@ E-JLS needs a defensible first access path before business capabilities are impl
 - Run bcrypt verification against a cost-12 dummy hash when no real credential is available, limiting user-enumeration timing differences.
 - Require 12–72-byte fallback passwords with lowercase, uppercase, number, and symbol. Five failed attempts lock a credential for 15 minutes.
 - Provide no public registration/default password. A profile-gated, one-shot bootstrap requires explicit production acknowledgement, advisory locking, and a serializable transaction. It refuses to run after any assignment exists and never prints the password.
+- After bootstrap, require the separate `iam.users.provision` capability and recent authentication for controlled manual provisioning. Derive the tenant from the principal, normalize email/username, create an `ACTIVE`/`MANUAL` user, and audit atomically. Do not create a password, role assignment, external identity, or session implicitly; those remain separate authorized workflows.
+- Never reuse bootstrap, disposable browser seed, or direct SQL as operational user provisioning. Map unique identifier conflicts to a generic domain conflict.
 - Keep Google Workspace visibly unconfigured; do not simulate SSO.
 
 ### Sessions

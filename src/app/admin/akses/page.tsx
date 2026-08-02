@@ -31,7 +31,11 @@ import {
   AuthenticationRequiredError,
   AuthorizationDeniedError,
 } from "@/modules/identity-access/errors";
-import { getCurrentPrincipal } from "@/modules/identity-access/session-dal";
+import {
+  getCurrentPrincipal,
+  hasRecentAuthentication as hasRecentPrincipalAuthentication,
+} from "@/modules/identity-access/session-dal";
+import { authorize, capabilities } from "@/modules/identity-access/policy";
 import {
   GOOGLE_LINK_CONFIRMATION_COOKIE,
   peekGoogleLinkConfirmation,
@@ -54,6 +58,7 @@ import {
   LinkGoogleIdentityForm,
   UnlinkGoogleIdentityForm,
   GrantAssignmentForm,
+  ProvisionUserForm,
   RevokeAssignmentForm,
   RevokeSessionForm,
   StatusForm,
@@ -77,6 +82,13 @@ export default async function UserAccessPage({ searchParams }: { searchParams: P
 
   const { principal, list, selectedUserId, detail } = result;
   const hasFilters = Boolean(query.query || query.status !== "ALL");
+  const canProvisionUsers = authorize(principal, capabilities.usersProvision, {
+    type: "SCHOOL",
+    schoolId: principal.schoolId,
+    reference: null,
+  }).allowed;
+  const hasRecentAuthentication = hasRecentPrincipalAuthentication(principal);
+  const provisionStatus = singleValue(rawParams.provision);
 
   return (
       <main className="app-main" id="main-content">
@@ -100,6 +112,27 @@ export default async function UserAccessPage({ searchParams }: { searchParams: P
             <span><strong>Deny by default</strong> · perubahan berisiko memerlukan autentikasi terbaru dan alasan.</span>
           </div>
         </header>
+
+        {provisionStatus === "success" ? (
+          <div className="alert provision-success" role="status">
+            <CheckCircle2 aria-hidden="true" size={21} />
+            <div><strong>Pengguna aktif berhasil dibuat</strong><p>Akun tidak memiliki password, role, identitas Google, atau sesi otomatis. Lanjutkan konfigurasi pada detail pengguna.</p></div>
+          </div>
+        ) : null}
+
+        {canProvisionUsers ? (
+          <details className="card provision-panel">
+            <summary>
+              <span className="section-title-icon"><UserPlus aria-hidden="true" size={20} /></span>
+              <span><span className="eyebrow">Provisioning terkendali</span><strong>Buat pengguna manual</strong></span>
+              <ChevronRight className="provision-chevron" aria-hidden="true" size={20} />
+            </summary>
+            <div className="section-body">
+              <p className="section-intro">Akun dibuat aktif dalam sekolah ini, tanpa privilege maupun metode login otomatis. Semua perubahan dicatat dalam audit.</p>
+              {hasRecentAuthentication ? <ProvisionUserForm /> : <RecentAuthInline />}
+            </div>
+          </details>
+        ) : null}
 
         <section className="access-toolbar" aria-label="Pencarian dan filter pengguna">
           <form className="filter-form" method="get">
@@ -640,6 +673,7 @@ function scopeLabel(type: string, reference: string | null) { return type === "S
 function auditOutcomeLabel(value: string) { return ({ SUCCEEDED: "Berhasil", DENIED: "Ditolak", FAILED: "Gagal" } as Record<string, string>)[value] ?? value; }
 function auditEventLabel(value: string) {
   return ({
+    "iam.user.provisioned": "Pengguna manual dibuat",
     "iam.assignment.granted": "Penugasan diberikan",
     "iam.assignment.revoked": "Penugasan dicabut",
     "iam.session.revoked": "Sesi dicabut",

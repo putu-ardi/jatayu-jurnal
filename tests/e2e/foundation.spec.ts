@@ -32,17 +32,20 @@ test("anonymous root resolves to the accessible login page", async ({ page }) =>
   await expect(page.getByRole("heading", { name: "Masuk ke E-JLS" })).toBeVisible();
   const schoolCodeInput = page.getByLabel("Kode sekolah");
   const emailInput = page.getByLabel("Email");
-  const passwordInput = page.getByLabel("Kata sandi");
+  const passwordInput = page.locator("#password");
+  const passwordToggle = page.getByRole("button", { name: "Tampilkan kata sandi" });
   const captchaInput = page.getByLabel("Hasil perhitungan");
   const refreshCaptchaButton = page.getByRole("button", { name: "Ganti soal" });
   const submitButton = page.getByRole("button", { name: "Masuk dengan akun fallback" });
   await expect(schoolCodeInput).toBeVisible();
   await expect(emailInput).toBeVisible();
   await expect(passwordInput).toBeVisible();
+  await expect(passwordToggle).toHaveAttribute("aria-pressed", "false");
   await expect(captchaInput).toBeEnabled();
   await expectMinimumTarget(schoolCodeInput);
   await expectMinimumTarget(emailInput);
   await expectMinimumTarget(passwordInput);
+  await expectMinimumTarget(passwordToggle);
   await expectMinimumTarget(captchaInput);
   await expectMinimumTarget(refreshCaptchaButton);
   await expectMinimumTarget(submitButton);
@@ -51,6 +54,18 @@ test("anonymous root resolves to the accessible login page", async ({ page }) =>
   ).toBe(true);
   await expectNoAccessibilityViolations(page, "halaman login");
 
+  await passwordInput.fill("local-visibility-check");
+  await passwordToggle.click();
+  await expect(passwordInput).toHaveAttribute("type", "text");
+  const passwordHideToggle = page.getByRole("button", { name: "Sembunyikan kata sandi" });
+  await expect(passwordHideToggle).toHaveAttribute("aria-pressed", "true");
+  await passwordHideToggle.focus();
+  await page.keyboard.press("Enter");
+  await expect(passwordInput).toHaveAttribute("type", "password");
+  await expect(passwordToggle).toHaveAttribute("aria-pressed", "false");
+
+  await page.reload();
+  await expect(captchaInput).toBeEnabled();
   await page.keyboard.press("Tab");
   await expect(page.getByRole("link", { name: "E-JLS, ke formulir masuk" })).toBeFocused();
   await page.keyboard.press("Tab");

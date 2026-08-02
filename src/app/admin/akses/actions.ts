@@ -21,6 +21,7 @@ import {
   disableFallbackCredential,
   grantRoleAssignment,
   linkGoogleIdentity,
+  provisionManualUser,
   revokeRoleAssignment,
   revokeUserSession,
   setFallbackCredential,
@@ -42,8 +43,36 @@ const commonSchema = z.object({
 
 function resultMessage(error: unknown) {
   return error instanceof Error && error.name === "ConflictError"
-    ? "Data telah berubah. Muat ulang lalu tinjau kembali."
+    ? "Data telah berubah atau sudah digunakan. Muat ulang lalu tinjau kembali."
     : "Aksi tidak dapat diproses. Periksa hak akses dan autentikasi terbaru.";
+}
+
+export async function provisionUser(
+  _state: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = z.object({
+    fullName: z.string().trim().min(3).max(120),
+    email: z.email().trim().max(254).transform((value) => value.toLowerCase()),
+    username: z.string().trim().max(64).regex(/^[A-Za-z0-9._-]+$/).or(z.literal("")),
+    reason: reasonSchema,
+  }).safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { ok: false, message: "Input pengguna tidak valid. Periksa nama, email, username, dan alasan." };
+  }
+
+  let user: Awaited<ReturnType<typeof provisionManualUser>>;
+  try {
+    user = await provisionManualUser({
+      ...parsed.data,
+      username: parsed.data.username ? parsed.data.username.toLowerCase() : null,
+    });
+  } catch (error) {
+    return { ok: false, message: resultMessage(error) };
+  }
+
+  revalidatePath("/admin/akses");
+  redirect(`/admin/akses?user=${user.id}&provision=success`);
 }
 
 export async function startGoogleIdentityLink(formData: FormData): Promise<never> {

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => {
   const transaction = {
     $queryRaw: vi.fn(),
     user: {
+      create: vi.fn(),
       findFirst: vi.fn(),
       updateMany: vi.fn(),
     },
@@ -76,6 +77,7 @@ import { ConflictError, AuthorizationDeniedError } from "./errors";
 import {
   grantRoleAssignment,
   linkGoogleIdentity,
+  provisionManualUser,
   revokeRoleAssignment,
   revokeUserSession,
   setFallbackCredential,
@@ -97,6 +99,7 @@ const actorPrincipal: Principal = {
       userId: "actor-user",
       roleKey: "admin-akses",
       permissions: [
+        "iam.users.provision",
         "iam.users.status.manage",
         "iam.assignments.grant",
         "iam.assignments.revoke",
@@ -129,6 +132,107 @@ beforeEach(() => {
     actorAssignmentId: "assignment-actor",
   });
   mocks.requirePrincipal.mockResolvedValue(actorPrincipal);
+});
+
+describe("provisionManualUser", () => {
+  const input = {
+    email: "  Teacher@School.Example  ",
+    username: "  Teacher.One  ",
+    fullName: "  Guru Penguji  ",
+    reason: "Provisioning akun guru untuk UAT Google.",
+  };
+
+  it("requires the distinct provisioning capability before opening a transaction", async () => {
+    mocks.requireCapability.mockRejectedValueOnce(new AuthorizationDeniedError());
+
+    await expect(provisionManualUser(input)).rejects.toBeInstanceOf(
+      AuthorizationDeniedError,
+    );
+
+    expect(mocks.requireCapability).toHaveBeenCalledWith("iam.users.provision");
+    expect(mocks.database.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("requires recent authentication before opening a transaction", async () => {
+    mocks.hasRecentAuthentication.mockReturnValueOnce(false);
+
+    await expect(provisionManualUser(input)).rejects.toBeInstanceOf(
+      AuthorizationDeniedError,
+    );
+
+    expect(mocks.database.$transaction).not.toHaveBeenCalled();
+    expect(mocks.transaction.user.create).not.toHaveBeenCalled();
+  });
+
+  it("revalidates the actor capability inside the transaction before creating a user", async () => {
+    mocks.getActivePrincipalBySessionId.mockResolvedValueOnce(null);
+
+    await expect(provisionManualUser(input)).rejects.toBeInstanceOf(
+      AuthorizationDeniedError,
+    );
+
+    expect(mocks.getActivePrincipalBySessionId).toHaveBeenCalledWith(
+      actorPrincipal.sessionId,
+      mocks.transaction,
+    );
+    expect(mocks.transaction.user.create).not.toHaveBeenCalled();
+    expect(mocks.appendAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("creates a normalized tenant user without automatic access and audits the operation", async () => {
+    mocks.transaction.user.create.mockResolvedValue({ id: "provisioned-user", version: 1 });
+
+    await expect(provisionManualUser(input)).resolves.toEqual({ id: "provisioned-user" });
+
+    expect(mocks.database.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { isolationLevel: "Serializable" },
+    );
+    expect(mocks.transaction.user.create).toHaveBeenCalledWith({
+      data: {
+        schoolId: actorPrincipal.schoolId,
+        email: "teacher@school.example",
+        username: "teacher.one",
+        fullName: "Guru Penguji",
+        status: "ACTIVE",
+        provisioningSource: "MANUAL",
+      },
+      select: { id: true, version: true },
+    });
+    const createData = mocks.transaction.user.create.mock.calls[0]?.[0]?.data;
+    expect(createData).not.toHaveProperty("password");
+    expect(createData).not.toHaveProperty("assignments");
+    expect(createData).not.toHaveProperty("identities");
+    expect(createData).not.toHaveProperty("sessions");
+    expect(mocks.appendAuditLog).toHaveBeenCalledWith(
+      mocks.transaction,
+      expect.objectContaining({
+        schoolId: actorPrincipal.schoolId,
+        subjectUserId: "provisioned-user",
+        actorAssignmentId: "assignment-actor",
+        eventType: "iam.user.provisioned",
+        entityType: "User",
+        entityId: "provisioned-user",
+        action: "provision-manual",
+        outcome: "SUCCEEDED",
+        reason: input.reason,
+        after: {
+          status: "ACTIVE",
+          provisioningSource: "MANUAL",
+          usernameProvided: true,
+          version: 1,
+        },
+      }),
+    );
+  });
+
+  it("maps a duplicate email or username to a safe conflict without audit", async () => {
+    mocks.transaction.user.create.mockRejectedValueOnce({ code: "P2002" });
+
+    await expect(provisionManualUser(input)).rejects.toBeInstanceOf(ConflictError);
+
+    expect(mocks.appendAuditLog).not.toHaveBeenCalled();
+  });
 });
 
 describe("updateUserStatus", () => {
